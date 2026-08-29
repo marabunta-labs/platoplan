@@ -1,0 +1,688 @@
+/**
+ * PlatoPlan - PlanConfigScreen
+ * Allows user to configure a new menu plan:
+ * - Date range (start + end) with DD/MM/YYYY text inputs
+ * - Elaborate days selection (checkboxes for each day in the range)
+ * - Free day picker
+ */
+
+import React, { useState, useCallback, useMemo } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  ScrollView,
+  StyleSheet,
+} from 'react-native';
+import { AlertCompat } from '../../utils/alert';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+
+import type { PlanningStackParamList } from '../../navigation/types';
+import type { FreeDayType } from '../../models/enums';
+import { usePlanning } from '../../hooks';
+import { CalendarPicker, Stepper } from '../../components';
+import { useI18n } from '../../i18n';
+
+type NavigationProp = NativeStackNavigationProp<PlanningStackParamList, 'PlanConfig'>;
+
+const SHORT_DAY_NAMES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+
+interface FreeDayConfig {
+  dayIndex: number;
+  type: FreeDayType;
+}
+
+// --- Date utilities ---
+
+function parseDateString(text: string): Date | null {
+  const match = text.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return null;
+  const day = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10) - 1;
+  const year = parseInt(match[3], 10);
+  const date = new Date(year, month, day);
+  // Validate the date is real (e.g., no 30/02/2025)
+  if (
+    date.getDate() !== day ||
+    date.getMonth() !== month ||
+    date.getFullYear() !== year
+  ) {
+    return null;
+  }
+  return date;
+}
+
+function formatDate(date: Date): string {
+  const d = String(date.getDate()).padStart(2, '0');
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const y = date.getFullYear();
+  return `${d}/${m}/${y}`;
+}
+
+function formatShortDate(date: Date): string {
+  const d = String(date.getDate()).padStart(2, '0');
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  return `${d}/${m}`;
+}
+
+function getDayLabel(startDate: Date, dayIndex: number): string {
+  const date = new Date(startDate);
+  date.setDate(date.getDate() + dayIndex);
+  const dayName = SHORT_DAY_NAMES[date.getDay()];
+  return `${dayName} ${formatShortDate(date)}`;
+}
+
+function daysBetween(start: Date, end: Date): number {
+  const msPerDay = 86400000;
+  const startNorm = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const endNorm = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+  return Math.round((endNorm.getTime() - startNorm.getTime()) / msPerDay) + 1;
+}
+
+// --- Main component ---
+
+export function PlanConfigScreen() {
+  const { t } = useI18n();
+  const navigation = useNavigation<NavigationProp>();
+  const { createPlan } = usePlanning();
+
+  const freeDayOptions: { value: FreeDayType; label: string }[] = [
+    { value: 'comida', label: t('mealTypes.comida') },
+    { value: 'cena', label: t('mealTypes.cena') },
+    { value: 'ambas', label: t('mealTypes.ambas') },
+  ];
+
+  // Default: today to today+6 (7 days)
+  const today = new Date();
+  const defaultEnd = new Date(today);
+  defaultEnd.setDate(today.getDate() + 6);
+
+  const [startDateText, setStartDateText] = useState(formatDate(today));
+  const [endDateText, setEndDateText] = useState(formatDate(defaultEnd));
+  const [servings, setServings] = useState(2);
+  const [elaborateDays, setElaborateDays] = useState<number[]>([]);
+  const [freeDays, setFreeDays] = useState<FreeDayConfig[]>([]);
+  const [startDateError, setStartDateError] = useState<string | null>(null);
+  const [endDateError, setEndDateError] = useState<string | null>(null);
+  const [step, setStep] = useState(0);
+
+  const startDate = useMemo(() => parseDateString(startDateText), [startDateText]);
+  const endDate = useMemo(() => parseDateString(endDateText), [endDateText]);
+
+  const periodDays = useMemo(() => {
+    if (!startDate || !endDate) return 0;
+    return daysBetween(startDate, endDate);
+  }, [startDate, endDate]);
+
+  const dateRangeError = useMemo(() => {
+    if (!startDate || !endDate) return null;
+    if (periodDays < 1) return t('planning.invalidRangeError');
+    if (periodDays > 30) return t('planning.maxPeriodError');
+    return null;
+  }, [startDate, endDate, periodDays, t]);
+
+  const toggleElaborateDay = useCallback((dayIndex: number) => {
+    setElaborateDays((prev) =>
+      prev.includes(dayIndex)
+        ? prev.filter((d) => d !== dayIndex)
+        : [...prev, dayIndex]
+    );
+  }, []);
+
+  const toggleFreeDay = useCallback((dayIndex: number, type: FreeDayType) => {
+    setFreeDays((prev) => {
+      const existing = prev.find((fd) => fd.dayIndex === dayIndex);
+      const hasLunch = existing?.type === 'comida' || existing?.type === 'ambas';
+      const hasDinner = existing?.type === 'cena' || existing?.type === 'ambas';
+      const nextLunch = type === 'ambas' ? !hasLunch : type === 'comida' ? !hasLunch : hasLunch;
+      const nextDinner = type === 'ambas' ? !hasDinner : type === 'cena' ? !hasDinner : hasDinner;
+      const nextType: FreeDayType | null = nextLunch && nextDinner ? 'ambas' : nextLunch ? 'comida' : nextDinner ? 'cena' : null;
+      if (!nextType) return prev.filter((fd) => fd.dayIndex !== dayIndex);
+      return existing
+        ? prev.map((fd) => fd.dayIndex === dayIndex ? { ...fd, type: nextType } : fd)
+        : [...prev, { dayIndex, type: nextType }];
+    });
+  }, []);
+
+  const getFreeDayType = (dayIndex: number): FreeDayType | null => {
+    const fd = freeDays.find((f) => f.dayIndex === dayIndex);
+    return fd?.type ?? null;
+  };
+
+  const isFormValid =
+    !startDateError &&
+    !endDateError &&
+    !dateRangeError &&
+    startDate !== null &&
+    endDate !== null &&
+    periodDays >= 1 &&
+    periodDays <= 30;
+
+  const handleNext = useCallback(async () => {
+    if (!startDate || !endDate || !isFormValid) return;
+
+    // Filter free days that exceed the period
+    const validFreeDays = freeDays.filter((fd) => fd.dayIndex < periodDays);
+
+    // Calculate required counts
+    const lunchFreeDays = validFreeDays.filter(
+      (fd) => fd.type === 'comida' || fd.type === 'ambas'
+    ).length;
+    const dinnerFreeDays = validFreeDays.filter(
+      (fd) => fd.type === 'cena' || fd.type === 'ambas'
+    ).length;
+
+    const requiredLunches = periodDays - lunchFreeDays;
+    const requiredDinners = periodDays - dinnerFreeDays;
+
+    if (requiredLunches <= 0 && requiredDinners <= 0) {
+      AlertCompat.alert(
+        t('common.error'),
+        'Todos los días están marcados como libres. Reduce los días libres para planificar.'
+      );
+      return;
+    }
+
+    // Create plan via service and navigate with real planId
+    const result = await createPlan({
+      periodDays,
+      startDate,
+      servings,
+      elaborateDays,
+      freeDays: validFreeDays,
+      selectedLunchRecipes: [],
+      selectedDinnerRecipes: [],
+    });
+
+    if (result.success) {
+      navigation.navigate('RecipeSelection', { planId: result.data.id });
+    } else {
+      AlertCompat.alert(t('common.error'), t('common.retry'));
+    }
+  }, [startDate, endDate, periodDays, servings, freeDays, elaborateDays, navigation, createPlan, isFormValid, t]);
+
+  const STEPS = [
+    t('planning.stepDates'),
+    t('planning.stepServings'),
+    t('planning.stepFreeDays'),
+    t('planning.stepElaborateDays'),
+    t('planning.stepSummary'),
+  ];
+
+  const dayIndices = useMemo(
+    () =>
+      startDate && periodDays >= 1 && periodDays <= 30
+        ? Array.from({ length: periodDays }, (_, i) => i)
+        : [],
+    [startDate, periodDays]
+  );
+
+  const requiredLunches =
+    periodDays -
+    freeDays.filter(
+      (fd) => fd.dayIndex < periodDays && (fd.type === 'comida' || fd.type === 'ambas')
+    ).length;
+  const requiredDinners =
+    periodDays -
+    freeDays.filter(
+      (fd) => fd.dayIndex < periodDays && (fd.type === 'cena' || fd.type === 'ambas')
+    ).length;
+
+  const isLastStep = step === STEPS.length - 1;
+  const canAdvance = step === 0 ? isFormValid : true;
+
+  const handleBack = () => {
+    if (step === 0) {
+      navigation.goBack();
+      return;
+    }
+    setStep((s) => s - 1);
+  };
+
+  return (
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={handleBack} accessibilityRole="button" accessibilityLabel={t('common.back')}>
+          <Text style={styles.backButton}>{t('common.back')}</Text>
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>{t('planning.configTitle')}</Text>
+      </View>
+
+      {/* Step progress */}
+      <View style={styles.stepper}>
+        {STEPS.map((label, index) => (
+          <View key={label} style={styles.stepperItem}>
+            <View
+              style={[
+                styles.stepperDot,
+                index === step && styles.stepperDotActive,
+                index < step && styles.stepperDotDone,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.stepperDotText,
+                  (index === step || index < step) && styles.stepperDotTextActive,
+                ]}
+              >
+                {index + 1}
+              </Text>
+            </View>
+            {index < STEPS.length - 1 && <View style={styles.stepperLine} />}
+          </View>
+        ))}
+      </View>
+      <Text style={styles.stepTitle}>
+        {t('planning.stepCounter', { current: step + 1, total: STEPS.length })} · {STEPS[step]}
+      </Text>
+
+      {/* Step 1: date range */}
+      {step === 0 && (
+        <View style={styles.section}>
+          <CalendarPicker
+            startDate={startDate}
+            endDate={endDate}
+            onStartDateSelect={(date) => {
+              setStartDateText(formatDate(date));
+              setStartDateError(null);
+            }}
+            onEndDateSelect={(date) => {
+              setEndDateText(formatDate(date));
+              setEndDateError(null);
+            }}
+            maxRangeDays={30}
+          />
+          {dateRangeError && <Text style={styles.errorText}>{dateRangeError}</Text>}
+          {isFormValid && (
+            <Text style={styles.periodInfo}>
+              📅 {t('planning.periodInfo', { days: periodDays })}
+            </Text>
+          )}
+        </View>
+      )}
+
+      {/* Step 2: diners */}
+      {step === 1 && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>{t('planning.servings')}</Text>
+          <Text style={styles.hint}>{t('planning.servingsHint')}</Text>
+          <Stepper
+            value={servings}
+            onChange={setServings}
+            min={1}
+            max={20}
+            label={t('planning.servings')}
+          />
+        </View>
+      )}
+
+      {/* Step 3: days that need no cooking */}
+      {step === 2 && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>{t('planning.freeDays')}</Text>
+          <Text style={styles.hint}>{t('planning.freeDaysHint')}</Text>
+          <View style={styles.freeDaysContainer}>
+            {dayIndices.map((dayIndex) => {
+              const currentType = getFreeDayType(dayIndex);
+              const lunchFree = currentType === 'comida' || currentType === 'ambas';
+              const dinnerFree = currentType === 'cena' || currentType === 'ambas';
+              return (
+                <View
+                  key={dayIndex}
+                  style={[styles.freeDayRow, currentType && styles.freeDayRowActive]}
+                >
+                  <Text
+                    style={[styles.freeDayLabel, currentType && styles.freeDayLabelActive]}
+                  >
+                    {getDayLabel(startDate!, dayIndex)}
+                  </Text>
+                  <View style={styles.freeDayOptions}>
+                    {freeDayOptions.slice(0, 2).map((option) => {
+                      const selected = option.value === 'comida' ? lunchFree : dinnerFree;
+                      return (
+                      <TouchableOpacity
+                        key={option.value}
+                        style={[
+                          styles.freeDayChip,
+                          selected && styles.freeDayChipSelected,
+                        ]}
+                        onPress={() => toggleFreeDay(dayIndex, option.value)}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected }}
+                        accessibilityLabel={`${getDayLabel(startDate!, dayIndex)} ${t('planning.notNeeded')} ${option.label}`}
+                      >
+                        <Text
+                          style={[
+                            styles.freeDayChipText,
+                            selected && styles.freeDayChipTextSelected,
+                            selected && styles.freeDayChipTextStruck,
+                          ]}
+                        >
+                          {selected ? `✓ ${option.label} — no se necesita` : option.label}
+                        </Text>
+                      </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+      )}
+
+      {/* Step 4: elaborate days */}
+      {step === 3 && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>{t('planning.elaborateDays')}</Text>
+          <Text style={styles.hint}>{t('planning.elaborateDaysHint')}</Text>
+          <View style={styles.daysGrid}>
+            {dayIndices.map((dayIndex) => (
+              <TouchableOpacity
+                key={dayIndex}
+                style={[
+                  styles.dayChip,
+                  elaborateDays.includes(dayIndex) && styles.dayChipSelected,
+                ]}
+                onPress={() => toggleElaborateDay(dayIndex)}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: elaborateDays.includes(dayIndex) }}
+                accessibilityLabel={`${getDayLabel(startDate!, dayIndex)} - ${t('prepTimes.elaborado')}`}
+              >
+                <Text
+                  style={[
+                    styles.dayChipText,
+                    elaborateDays.includes(dayIndex) && styles.dayChipTextSelected,
+                  ]}
+                >
+                  {getDayLabel(startDate!, dayIndex)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      )}
+
+      {/* Step 5: summary */}
+      {step === 4 && startDate && endDate && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>{t('planning.summary')}</Text>
+          <Text style={styles.summaryText}>
+            📅 {formatDate(startDate)} — {formatDate(endDate)} ({t('planning.periodInfo', { days: periodDays })})
+          </Text>
+          <Text style={styles.summaryText}>
+            👥 {t('planning.servingsSummary', { count: servings })}
+          </Text>
+          <Text style={styles.summaryText}>
+            🍽️ {t('planning.requiredLunches', { count: requiredLunches })}
+          </Text>
+          <Text style={styles.summaryText}>
+            🌙 {t('planning.requiredDinners', { count: requiredDinners })}
+          </Text>
+          <Text style={styles.summaryText}>
+            👨‍🍳 {t('planning.elaborateDays')}:{' '}
+            {elaborateDays.length === 0
+              ? t('planning.noneConfigured')
+              : elaborateDays
+                  .slice()
+                  .sort((a, b) => a - b)
+                  .map((d) => getDayLabel(startDate, d))
+                  .join(', ')}
+          </Text>
+        </View>
+      )}
+
+      {/* Navigation */}
+      <View style={styles.wizardNav}>
+        {step > 0 && (
+          <TouchableOpacity
+            style={styles.prevButton}
+            onPress={() => setStep((s) => s - 1)}
+            accessibilityRole="button"
+            accessibilityLabel={t('planning.previousStep')}
+          >
+            <Text style={styles.prevButtonText}>{t('planning.previousStep')}</Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity
+          style={[styles.nextButton, !canAdvance && styles.nextButtonDisabled]}
+          onPress={() => (isLastStep ? handleNext() : setStep((s) => s + 1))}
+          disabled={!canAdvance}
+          accessibilityRole="button"
+          accessibilityLabel={isLastStep ? t('planning.generatePlan') : t('planning.next')}
+          accessibilityState={{ disabled: !canAdvance }}
+        >
+          <Text style={[styles.nextButtonText, !canAdvance && styles.nextButtonTextDisabled]}>
+            {isLastStep ? t('planning.generatePlan') : t('planning.next')}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
+  content: {
+    padding: 16,
+    paddingBottom: 40,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  backButton: {
+    fontSize: 15,
+    color: '#007AFF',
+    fontWeight: '500',
+  },
+  headerTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#1a1a1a',
+    marginLeft: 12,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#1a1a1a',
+    marginBottom: 24,
+  },
+  section: {
+    marginBottom: 24,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  periodInfo: {
+    fontSize: 14,
+    color: '#007AFF',
+    fontWeight: '500',
+    marginTop: 8,
+  },
+  hint: {
+    fontSize: 13,
+    color: '#888',
+    marginTop: 4,
+  },
+  errorText: {
+    fontSize: 13,
+    color: '#c00',
+    marginTop: 4,
+  },
+  daysGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
+  dayChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#f0f0f0',
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  dayChipSelected: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  dayChipText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#555',
+  },
+  dayChipTextSelected: {
+    color: '#fff',
+  },
+  freeDaysContainer: {
+    marginTop: 8,
+  },
+  freeDayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#eee',
+  },
+  freeDayRowActive: {
+    backgroundColor: '#FDECEA',
+    borderBottomColor: '#F5B7B1',
+  },
+  freeDayLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#333',
+    width: 120,
+  },
+  freeDayLabelActive: {
+    color: '#C0392B',
+    fontWeight: '700',
+  },
+  freeDayOptions: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  freeDayChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: '#f5f5f5',
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  freeDayChipSelected: {
+    backgroundColor: '#E74C3C',
+    borderColor: '#E74C3C',
+  },
+  freeDayChipText: {
+    fontSize: 12,
+    color: '#666',
+  },
+  freeDayChipTextSelected: {
+    color: '#fff',
+    fontWeight: '500',
+  },
+  freeDayChipTextStruck: {
+    textDecorationLine: 'line-through',
+  },
+  summaryText: {
+    fontSize: 14,
+    color: '#555',
+    marginBottom: 4,
+  },
+  nextButton: {
+    backgroundColor: '#007AFF',
+    borderRadius: 10,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 8,
+    flex: 1,
+  },
+  nextButtonDisabled: {
+    backgroundColor: '#ccc',
+  },
+  nextButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  nextButtonTextDisabled: {
+    color: '#888',
+  },
+  wizardNav: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+  },
+  prevButton: {
+    borderRadius: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    marginTop: 8,
+    backgroundColor: '#f0f0f0',
+  },
+  prevButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  stepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  stepperItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 1,
+  },
+  stepperDot: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#eee',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepperDotActive: {
+    backgroundColor: '#007AFF',
+  },
+  stepperDotDone: {
+    backgroundColor: '#34C759',
+  },
+  stepperDotText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#888',
+  },
+  stepperDotTextActive: {
+    color: '#fff',
+  },
+  stepperLine: {
+    width: 24,
+    height: 2,
+    backgroundColor: '#eee',
+    marginHorizontal: 4,
+  },
+  stepTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#888',
+    marginBottom: 16,
+    textTransform: 'uppercase',
+  },
+});

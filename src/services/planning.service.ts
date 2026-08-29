@@ -22,9 +22,15 @@ export interface SlotRef {
 
 /** Changes that can be applied to an existing plan */
 export interface PlanChanges {
+  name?: string;
+  periodDays?: number;
+  startDate?: Date;
   status?: 'draft' | 'confirmed';
   elaborateDays?: number[];
   servings?: number;
+  freeDays?: { dayIndex: number; type: FreeDayType }[];
+  dayNotes?: Record<string, string>;
+  mealNotes?: Record<string, string>;
   /** Confirm the plan even if some slots have no recipe assigned. */
   allowGaps?: boolean;
 }
@@ -179,6 +185,7 @@ export function createPlanningService(db: SQLiteDatabase) {
       // Recipe selection and count validation happen later
       // (via assignRecipe and updatePlan with status='confirmed').
       const plan = await planRepository.createPlan(db, {
+        name: config.name,
         periodDays: config.periodDays,
         startDate: config.startDate,
         servings: config.servings,
@@ -248,10 +255,29 @@ export function createPlanningService(db: SQLiteDatabase) {
       }
 
       await planRepository.updatePlan(db, planId, {
+        name: changes.name,
+        periodDays: changes.periodDays,
+        startDate: changes.startDate,
         status: changes.status,
         elaborateDays: changes.elaborateDays,
         servings: changes.servings,
+        dayNotes: changes.dayNotes,
+        mealNotes: changes.mealNotes,
       });
+
+      if (changes.freeDays !== undefined) {
+        await db.runAsync('DELETE FROM free_days WHERE plan_id = ?', planId);
+        for (const freeDay of changes.freeDays) {
+          if (freeDay.dayIndex >= 0 && freeDay.dayIndex < (changes.periodDays ?? existing.periodDays)) {
+            await assignmentRepository.addFreeDay(
+              db,
+              planId,
+              freeDay.dayIndex,
+              freeDay.type
+            );
+          }
+        }
+      }
 
       const updatedPlan = await planRepository.getPlanById(db, planId);
       return { success: true, data: updatedPlan! };

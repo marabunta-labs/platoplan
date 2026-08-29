@@ -46,6 +46,7 @@ export interface UpdateIngredientInput {
 
 /** Configuration for generating a menu plan */
 export interface PlanConfig {
+  name?: string;
   periodDays: number;
   startDate: Date;
   servings?: number;

@@ -73,10 +73,14 @@ CREATE TABLE pantry_entries (
 CREATE TABLE menu_plans (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL DEFAULT '',
   period_days INTEGER NOT NULL CHECK (period_days BETWEEN 1 AND 30),
   start_date TEXT NOT NULL,
+  servings INTEGER NOT NULL DEFAULT 2,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'confirmed')),
   elaborate_days_config TEXT NOT NULL DEFAULT '[]',
+  day_notes JSONB NOT NULL DEFAULT '{}'::jsonb,
+  meal_notes JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   synced_at TIMESTAMPTZ

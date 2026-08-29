@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 /**
  * Schema version. Increment when adding new migrations.
  */
-const CURRENT_VERSION = 5;
+const CURRENT_VERSION = 6;
 
 /**
  * Runs all pending migrations. Idempotent — safe to call on every app launch.
@@ -34,6 +34,9 @@ export async function runMigrations(db: SQLite.SQLiteDatabase): Promise<void> {
   }
   if (currentVersion < 5) {
     await applyMigrationV5(db);
+  }
+  if (currentVersion < 6) {
+    await applyMigrationV6(db);
   }
 
   // Set the new version
@@ -88,10 +91,13 @@ CREATE TABLE IF NOT EXISTS pantry_entries (
 
 CREATE TABLE IF NOT EXISTS menu_plans (
   id TEXT PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT '',
   period_days INTEGER NOT NULL CHECK(period_days BETWEEN 1 AND 30),
   start_date TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'confirmed')),
   elaborate_days_config TEXT NOT NULL DEFAULT '[]',
+  day_notes TEXT NOT NULL DEFAULT '{}',
+  meal_notes TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -241,5 +247,26 @@ async function applyMigrationV5(db: SQLite.SQLiteDatabase): Promise<void> {
     await db.execAsync(
       `ALTER TABLE menu_plans ADD COLUMN servings INTEGER NOT NULL DEFAULT 2;`
     );
+  }
+}
+
+/**
+ * Migration v6: Adds optional plan names and JSON-backed notes for each day and
+ * meal slot. JSON columns keep notes available even when a meal is unassigned.
+ */
+async function applyMigrationV6(db: SQLite.SQLiteDatabase): Promise<void> {
+  const tableInfo = (await db.getAllAsync<{ name: string }>(
+    `PRAGMA table_info(menu_plans);`
+  )) ?? [];
+  const columnNames = tableInfo.map((col) => col.name);
+
+  if (!columnNames.includes('name')) {
+    await db.execAsync(`ALTER TABLE menu_plans ADD COLUMN name TEXT NOT NULL DEFAULT '';`);
+  }
+  if (!columnNames.includes('day_notes')) {
+    await db.execAsync(`ALTER TABLE menu_plans ADD COLUMN day_notes TEXT NOT NULL DEFAULT '{}';`);
+  }
+  if (!columnNames.includes('meal_notes')) {
+    await db.execAsync(`ALTER TABLE menu_plans ADD COLUMN meal_notes TEXT NOT NULL DEFAULT '{}';`);
   }
 }

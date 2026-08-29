@@ -63,12 +63,18 @@ export interface PantryEntry {
 /** A menu plan for a given period */
 export interface MenuPlan {
   id: string;
+  /** Optional descriptive name chosen by the user. */
+  name: string;
   periodDays: number;
   startDate: Date;
   /** Number of diners the plan is generated for. */
   servings: number;
   status: PlanStatus;
   elaborateDays: number[];
+  /** Free-form notes keyed by the zero-based day index. */
+  dayNotes: Record<string, string>;
+  /** Free-form notes keyed as `${dayIndex}:${slot}`. */
+  mealNotes: Record<string, string>;
   assignments: PlanAssignment[];
   freeDays: FreeDay[];
   createdAt: Date;

@@ -16,11 +16,14 @@ import type { CreatePlanInput, UpdatePlanInput } from '../plan.repository';
 interface PlanRow {
   id: string;
   user_id: string;
+  name?: string | null;
   period_days: number;
   start_date: string;
   servings: number | null;
   status: string;
   elaborate_days_config: string;
+  day_notes?: Record<string, string> | string | null;
+  meal_notes?: Record<string, string> | string | null;
   created_at: string;
   updated_at: string;
   synced_at: string | null;
@@ -46,13 +49,18 @@ interface FreeDayRow {
 }
 
 function mapRowToPlan(row: PlanRow): MenuPlan {
+  const parseNotes = (value: Record<string, string> | string | null | undefined) =>
+    typeof value === 'string' ? JSON.parse(value) : (value ?? {});
   return {
     id: row.id,
+    name: row.name ?? '',
     periodDays: row.period_days,
     startDate: new Date(row.start_date),
     servings: row.servings ?? 2,
     status: row.status as PlanStatus,
     elaborateDays: JSON.parse(row.elaborate_days_config),
+    dayNotes: parseNotes(row.day_notes),
+    mealNotes: parseNotes(row.meal_notes),
     assignments: [],
     freeDays: [],
     createdAt: new Date(row.created_at),
@@ -140,10 +148,14 @@ export class SupabasePlanRepository
       .from('menu_plans')
       .insert({
         user_id: this.userId,
+        name: input.name?.trim() ?? '',
         period_days: input.periodDays,
         start_date: input.startDate.toISOString(),
+        servings: input.servings ?? 2,
         status: 'draft',
         elaborate_days_config: elaborateDaysConfig,
+        day_notes: input.dayNotes ?? {},
+        meal_notes: input.mealNotes ?? {},
         created_at: now,
         updated_at: now,
         synced_at: now,
@@ -168,8 +180,26 @@ export class SupabasePlanRepository
     if (input.status !== undefined) {
       updates.status = input.status;
     }
+    if (input.name !== undefined) {
+      updates.name = input.name.trim();
+    }
+    if (input.periodDays !== undefined) {
+      updates.period_days = input.periodDays;
+    }
+    if (input.startDate !== undefined) {
+      updates.start_date = input.startDate.toISOString();
+    }
+    if (input.servings !== undefined) {
+      updates.servings = input.servings;
+    }
     if (input.elaborateDays !== undefined) {
       updates.elaborate_days_config = JSON.stringify(input.elaborateDays);
+    }
+    if (input.dayNotes !== undefined) {
+      updates.day_notes = input.dayNotes;
+    }
+    if (input.mealNotes !== undefined) {
+      updates.meal_notes = input.mealNotes;
     }
 
     if (Object.keys(updates).length > 0) {

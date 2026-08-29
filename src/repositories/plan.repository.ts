@@ -12,11 +12,14 @@ import { generateId } from '../database/database';
 
 interface PlanRow {
   id: string;
+  name?: string | null;
   period_days: number;
   start_date: string;
   servings: number | null;
   status: string;
   elaborate_days_config: string;
+  day_notes?: string | null;
+  meal_notes?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -39,11 +42,14 @@ interface FreeDayRow {
 function mapRowToPlan(row: PlanRow): MenuPlan {
   return {
     id: row.id,
+    name: row.name ?? '',
     periodDays: row.period_days,
     startDate: new Date(row.start_date),
     servings: row.servings ?? 2,
     status: row.status as PlanStatus,
     elaborateDays: JSON.parse(row.elaborate_days_config),
+    dayNotes: JSON.parse(row.day_notes ?? '{}'),
+    mealNotes: JSON.parse(row.meal_notes ?? '{}'),
     assignments: [],
     freeDays: [],
     createdAt: new Date(row.created_at),
@@ -71,16 +77,24 @@ function mapRowToFreeDay(row: FreeDayRow): FreeDay {
 }
 
 export interface CreatePlanInput {
+  name?: string;
   periodDays: number;
   startDate: Date;
   servings?: number;
   elaborateDays?: number[];
+  dayNotes?: Record<string, string>;
+  mealNotes?: Record<string, string>;
 }
 
 export interface UpdatePlanInput {
+  name?: string;
+  periodDays?: number;
+  startDate?: Date;
   status?: PlanStatus;
   servings?: number;
   elaborateDays?: number[];
+  dayNotes?: Record<string, string>;
+  mealNotes?: Record<string, string>;
 }
 
 /**
@@ -159,26 +173,35 @@ export class PlanRepository
     const now = new Date().toISOString();
     const elaborateDaysConfig = JSON.stringify(input.elaborateDays ?? []);
     const servings = input.servings ?? 2;
+    const name = input.name?.trim() ?? '';
+    const dayNotes = JSON.stringify(input.dayNotes ?? {});
+    const mealNotes = JSON.stringify(input.mealNotes ?? {});
 
     await this.db.runAsync(
-      `INSERT INTO menu_plans (id, period_days, start_date, servings, status, elaborate_days_config, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)`,
+      `INSERT INTO menu_plans (id, period_days, start_date, servings, status, elaborate_days_config, name, day_notes, meal_notes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?)`,
       id,
       input.periodDays,
       input.startDate.toISOString(),
       servings,
       elaborateDaysConfig,
+      name,
+      dayNotes,
+      mealNotes,
       now,
       now
     );
 
     return {
       id,
+      name,
       periodDays: input.periodDays,
       startDate: input.startDate,
       servings,
       status: 'draft',
       elaborateDays: input.elaborateDays ?? [],
+      dayNotes: input.dayNotes ?? {},
+      mealNotes: input.mealNotes ?? {},
       assignments: [],
       freeDays: [],
       createdAt: new Date(now),
@@ -198,6 +221,21 @@ export class PlanRepository
       params.push(changes.status);
     }
 
+    if (changes.name !== undefined) {
+      setClauses.push('name = ?');
+      params.push(changes.name.trim());
+    }
+
+    if (changes.periodDays !== undefined) {
+      setClauses.push('period_days = ?');
+      params.push(changes.periodDays);
+    }
+
+    if (changes.startDate !== undefined) {
+      setClauses.push('start_date = ?');
+      params.push(changes.startDate.toISOString());
+    }
+
     if (changes.elaborateDays !== undefined) {
       setClauses.push('elaborate_days_config = ?');
       params.push(JSON.stringify(changes.elaborateDays));
@@ -206,6 +244,16 @@ export class PlanRepository
     if (changes.servings !== undefined) {
       setClauses.push('servings = ?');
       params.push(changes.servings);
+    }
+
+    if (changes.dayNotes !== undefined) {
+      setClauses.push('day_notes = ?');
+      params.push(JSON.stringify(changes.dayNotes));
+    }
+
+    if (changes.mealNotes !== undefined) {
+      setClauses.push('meal_notes = ?');
+      params.push(JSON.stringify(changes.mealNotes));
     }
 
     if (setClauses.length > 0) {
@@ -296,6 +344,21 @@ export async function updatePlan(
     params.push(changes.status);
   }
 
+  if (changes.name !== undefined) {
+    setClauses.push('name = ?');
+    params.push(changes.name.trim());
+  }
+
+  if (changes.periodDays !== undefined) {
+    setClauses.push('period_days = ?');
+    params.push(changes.periodDays);
+  }
+
+  if (changes.startDate !== undefined) {
+    setClauses.push('start_date = ?');
+    params.push(changes.startDate.toISOString());
+  }
+
   if (changes.elaborateDays !== undefined) {
     setClauses.push('elaborate_days_config = ?');
     params.push(JSON.stringify(changes.elaborateDays));
@@ -304,6 +367,16 @@ export async function updatePlan(
   if (changes.servings !== undefined) {
     setClauses.push('servings = ?');
     params.push(changes.servings);
+  }
+
+  if (changes.dayNotes !== undefined) {
+    setClauses.push('day_notes = ?');
+    params.push(JSON.stringify(changes.dayNotes));
+  }
+
+  if (changes.mealNotes !== undefined) {
+    setClauses.push('meal_notes = ?');
+    params.push(JSON.stringify(changes.mealNotes));
   }
 
   if (setClauses.length === 0) {

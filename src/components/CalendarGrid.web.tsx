@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import type { MenuPlan, Recipe, PlanAssignment } from '../models/types';
+import type { MenuPlan, Recipe } from '../models/types';
 import type { MealSlot } from '../models/enums';
 import { useI18n } from '../i18n';
 
@@ -8,6 +8,7 @@ export interface SlotRef { day: number; slot: MealSlot; }
 export interface CalendarGridProps {
   plan: MenuPlan;
   onSlotPress: (day: number, slot: MealSlot) => void;
+  onDayNotePress?: (dayIndex: number) => void;
   recipes?: Recipe[];
   unassignedRecipes?: Recipe[]; 
   
@@ -36,6 +37,7 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
   recipes = [], 
   unassignedRecipes = [],
   onSlotPress, 
+  onDayNotePress,
   draggingSlot = null, 
   onPickUp, 
   onCancelPickUp, 
@@ -45,6 +47,8 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
   orientation = 'vertical',
 }) => {
   const { t } = useI18n();
+  const isHorizontal = orientation === 'horizontal';
+
   const startDate = useMemo(() => plan.startDate instanceof Date ? plan.startDate : new Date(plan.startDate), [plan.startDate]);
   const recipesById = useMemo(() => new Map(recipes.map((recipe) => [recipe.id, recipe])), [recipes]);
 
@@ -103,85 +107,104 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
         )}
       </div>
 
-      <div style={{ ...styles.container, ...(orientation === 'horizontal' ? styles.horizontalContainer : {}) }} aria-label={t('planning.calendarTitle')}>
+      <div style={{ ...styles.container, ...(isHorizontal ? styles.horizontalContainer : {}) }} aria-label={t('planning.calendarTitle')}>
         {Array.from({ length: plan.periodDays }, (_, day) => {
           const date = addDays(startDate, day);
+          const dayNote = plan.dayNotes ? plan.dayNotes[day.toString()] || plan.dayNotes[day as any] : null;
+
           return (
-            <div key={day} style={{ ...styles.dayRow, ...(orientation === 'horizontal' ? styles.horizontalDay : {}) }}>
-              <div style={styles.date}>
-                <strong>{WEEKDAYS[date.getDay()].slice(0, 3)}</strong>
-                <span>{date.getDate()}</span>
-                <small>{MONTHS[date.getMonth()]}</small>
+            <div key={day} style={{ ...styles.dayWrapper, ...(isHorizontal ? styles.dayWrapperHorizontal : {}) }}>
+              <div style={{ ...styles.dayRow, ...(isHorizontal ? styles.dayRowHorizontal : {}) }}>
+                <div 
+                  style={{ ...styles.date, ...(isHorizontal ? styles.dateHorizontal : {}) }} 
+                  onClick={() => onDayNotePress?.(day)}
+                  title={dayNote ? `Nota: ${dayNote}` : "Añadir nota de día"}
+                >
+                  <strong style={{marginRight: isHorizontal ? '6px' : 0}}>{WEEKDAYS[date.getDay()].slice(0, 3)}</strong>
+                  <span style={{marginRight: isHorizontal ? '6px' : 0}}>{date.getDate()}</span>
+                  <small style={{marginRight: isHorizontal ? '6px' : 0}}>{MONTHS[date.getMonth()]}</small>
+                  <span style={{ fontSize: '11px', cursor: 'pointer', background: dayNote ? '#FFF59D' : 'transparent', padding: '1px 4px', borderRadius: '4px' }}>
+                    {dayNote ? '📝' : '+📝'}
+                  </span>
+                </div>
+                
+                <div style={{ ...styles.slots, ...(isHorizontal ? styles.slotsHorizontal : {}) }}>
+                  {SLOTS.map((slot) => {
+                    const free = isFree(day, slot);
+                    const recipe = getRecipe(day, slot);
+                    const movable = Boolean(recipe);
+                    const dragging = isDraggingSlot(day, slot);
+                    const mealNote = plan.mealNotes ? plan.mealNotes[`${day}:${slot}`] : null;
+                    
+                    const mealTypeMismatch = draggedRecipe?.mealType && draggedRecipe.mealType !== 'ambas' && draggedRecipe.mealType !== slot;
+                    const isBlocked = draggingSlot && mealTypeMismatch; 
+                    const isComplex = recipe?.prepTime === 'elaborado';
+
+                    return (
+                      <div
+                        key={slot}
+                        data-plan-slot={`${day}:${slot}`}
+                        role="button"
+                        tabIndex={0}
+                        draggable={movable && !draggingSlot} 
+                        onClick={() => !isBlocked && !draggingSlot && onSlotPress(day, slot)}
+                        onDragStart={(event) => {
+                          event.dataTransfer.effectAllowed = 'move';
+                          setTimeout(() => onPickUp?.({ day, slot }), 0);
+                        }}
+                        onDragOver={(event) => {
+                          if (!isBlocked && !dragging) {
+                            event.preventDefault(); 
+                            event.dataTransfer.dropEffect = 'move';
+                          }
+                        }}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          if (!draggingSlot || isBlocked || dragging) return;
+
+                          if (draggingSlot.isUnassigned) {
+                            onMoveFromUnassigned?.(draggingSlot.recipeId, { day, slot });
+                          } else {
+                            onMove?.(draggingSlot as SlotRef, { day, slot });
+                          }
+                          onCancelPickUp?.();
+                        }}
+                        onDragEnd={() => onCancelPickUp?.()}
+
+                        style={{ 
+                          ...styles.card, 
+                          ...(free ? styles.free : {}), 
+                          ...(dragging ? styles.dragging : {}), 
+                          ...(isBlocked ? styles.blocked : {}),
+                          ...(isComplex && !dragging ? styles.complexRecipe : {}),
+                          cursor: isBlocked ? 'not-allowed' : (movable ? 'grab' : 'pointer') 
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                          <small style={free ? styles.freeLabel : styles.label}>{slot}</small>
+                          {mealNote && <small title={mealNote}>📌</small>}
+                        </div>
+                        
+                        {free && !recipe ? (
+                          <span style={styles.freeValueEmpty}>{t('planning.notNeeded')}</span>
+                        ) : (
+                          <span style={styles.value}>{recipe?.name ?? t('planning.emptySlot')}</span>
+                        )}
+
+                        {mealNote && (
+                          <small style={styles.mealNoteText} title={mealNote}>{mealNote}</small>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
               
-              <div style={{ ...styles.slots, ...(orientation === 'horizontal' ? { flexDirection: 'column' } : {}) }}>
-                {SLOTS.map((slot) => {
-                  const free = isFree(day, slot);
-                  const recipe = getRecipe(day, slot);
-                  const movable = Boolean(recipe);
-                  const dragging = isDraggingSlot(day, slot);
-                  
-                  // Validación 100% tipada con tu MealType ('comida' | 'cena' | 'ambas')
-                  const mealTypeMismatch = draggedRecipe?.mealType && draggedRecipe.mealType !== 'ambas' && draggedRecipe.mealType !== slot;
-                  const isBlocked = draggingSlot && mealTypeMismatch; 
-                  
-                  // Validación 100% tipada con tu PrepTime
-                  const isComplex = recipe?.prepTime === 'elaborado';
-
-                  return (
-                    <div
-                      key={slot}
-                      data-plan-slot={`${day}:${slot}`}
-                      role="button"
-                      tabIndex={0}
-                      draggable={movable && !draggingSlot} 
-                      
-                      onClick={() => !isBlocked && !draggingSlot && onSlotPress(day, slot)}
-                      
-                      onDragStart={(event) => {
-                        event.dataTransfer.effectAllowed = 'move';
-                        setTimeout(() => onPickUp?.({ day, slot }), 0);
-                      }}
-                      onDragOver={(event) => {
-                        if (!isBlocked && !dragging) {
-                          event.preventDefault(); 
-                          event.dataTransfer.dropEffect = 'move';
-                        }
-                      }}
-                      onDrop={(event) => {
-                        event.preventDefault();
-                        if (!draggingSlot || isBlocked || dragging) return;
-
-                        if (draggingSlot.isUnassigned) {
-                          onMoveFromUnassigned?.(draggingSlot.recipeId, { day, slot });
-                        } else {
-                          onMove?.(draggingSlot as SlotRef, { day, slot });
-                        }
-                        
-                        onCancelPickUp?.();
-                      }}
-                      onDragEnd={() => onCancelPickUp?.()}
-
-                      style={{ 
-                        ...styles.card, 
-                        ...(free ? styles.free : {}), 
-                        ...(dragging ? styles.dragging : {}), 
-                        ...(isBlocked ? styles.blocked : {}),
-                        ...(isComplex && !dragging ? styles.complexRecipe : {}),
-                        cursor: isBlocked ? 'not-allowed' : (movable ? 'grab' : 'pointer') 
-                      }}
-                    >
-                      <small style={free ? styles.freeLabel : styles.label}>{slot}</small>
-                      
-                      {free && !recipe ? (
-                        <span style={styles.freeValueEmpty}>{t('planning.notNeeded')}</span>
-                      ) : (
-                        <span style={styles.value}>{recipe?.name ?? t('planning.emptySlot')}</span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+              {dayNote && (
+                <div style={{ ...styles.dayNoteFull, ...(isHorizontal ? styles.dayNoteFullHorizontal : {}) }} onClick={() => onDayNotePress?.(day)}>
+                  📝 {dayNote}
+                </div>
+              )}
             </div>
           );
         })}
@@ -193,22 +216,26 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
 const styles: Record<string, React.CSSProperties> = {
   wrapper: { display: 'flex', flexDirection: 'column', height: '100%' },
   container: { flex: 1, overflowY: 'auto', padding: '0 12px 24px' },
-  horizontalContainer: { display: 'flex', gap: 10, overflowX: 'auto', overflowY: 'hidden' },
+  horizontalContainer: { display: 'flex', flexDirection: 'row', gap: 12, overflowX: 'auto', overflowY: 'hidden', paddingBottom: '16px' },
   
-  unassignedZone: {
-    margin: '0 12px 12px', padding: '12px', border: '2px dashed #B0BEC5', borderRadius: 8, 
-    background: '#ECEFF1', transition: 'all 0.2s', minHeight: '60px'
-  },
+  unassignedZone: { margin: '0 12px 12px', padding: '12px', border: '2px dashed #B0BEC5', borderRadius: 8, background: '#ECEFF1', transition: 'all 0.2s', minHeight: '60px' },
   unassignedZoneActive: { borderColor: '#007AFF', background: '#E3F2FD' },
   unassignedTitle: { margin: '0 0 8px 0', fontSize: '12px', color: '#546E7A', textTransform: 'uppercase' },
   unassignedEmpty: { fontSize: '13px', color: '#90A4AE', margin: 0, fontStyle: 'italic' },
   unassignedList: { display: 'flex', gap: '8px', flexWrap: 'wrap' },
   unassignedCard: { background: '#FFF', border: '1px solid #CFD8DC', padding: '6px 12px', borderRadius: '16px', fontSize: '13px', cursor: 'grab', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' },
 
-  dayRow: { alignItems: 'stretch', display: 'flex', gap: 8, marginBottom: 7 },
-  horizontalDay: { flex: '0 0 160px', flexDirection: 'column', marginBottom: 0 },
-  date: { alignItems: 'center', color: '#667085', display: 'flex', flexDirection: 'column', fontSize: 11, justifyContent: 'center', minWidth: 48 },
+  dayWrapper: { marginBottom: 8 },
+  dayWrapperHorizontal: { flex: '0 0 160px', marginBottom: 0 },
+  
+  dayRow: { alignItems: 'stretch', display: 'flex', gap: 8 },
+  dayRowHorizontal: { flexDirection: 'column' },
+  
+  date: { alignItems: 'center', color: '#667085', display: 'flex', flexDirection: 'column', fontSize: 11, justifyContent: 'center', minWidth: 52, cursor: 'pointer', background: '#FAF9F6', borderRadius: 8, padding: '4px 0', border: '1px solid #EFECE6' },
+  dateHorizontal: { width: '100%', marginBottom: '8px', padding: '8px 0', flexDirection: 'row' },
+  
   slots: { display: 'flex', flex: 1, gap: 7, flexDirection: 'row' },
+  slotsHorizontal: { flexDirection: 'column' },
   
   card: { background: '#F5F7FA', border: '1px solid #E6E9EE', borderRadius: 9, display: 'flex', flex: 1, flexDirection: 'column', minHeight: 58, padding: '8px 10px', userSelect: 'none', transition: 'all 0.2s ease' },
   label: { color: '#667085', fontWeight: 700, textTransform: 'uppercase' },
@@ -219,7 +246,10 @@ const styles: Record<string, React.CSSProperties> = {
   freeValueEmpty: { color: '#C0392B', fontSize: 13, fontWeight: 600, marginTop: 3, textDecoration: 'line-through' },
   
   dragging: { background: '#E3F2FD', border: '2px dashed #007AFF', opacity: 0.5 },
-  
   blocked: { opacity: 0.3, filter: 'grayscale(100%)', background: '#e0e0e0' },
-  complexRecipe: { borderLeft: '4px solid #F1C40F', background: '#FEF9E7' }
+  complexRecipe: { borderLeft: '4px solid #F1C40F', background: '#FEF9E7' },
+  mealNoteText: { fontSize: '11px', color: '#B7950B', fontStyle: 'italic', marginTop: '3px', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' },
+  
+  dayNoteFull: { marginLeft: '60px', background: '#FFF9C4', padding: '8px', borderRadius: '6px', marginTop: '4px', fontSize: '13px', color: '#F57F17', fontWeight: 500, cursor: 'pointer' },
+  dayNoteFullHorizontal: { marginLeft: 0 }
 };

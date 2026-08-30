@@ -27,7 +27,7 @@ export type PantryStackParamList = {
 
 /** Planning stack param list */
 export type PlanningStackParamList = {
-  PlanConfig: undefined;
+  PlanConfig: { planId?: string, isEditing?: boolean } | undefined;
   PlanHistory: undefined;
   RecipeSelection: { planId: string };
   PlanCalendar: { planId: string };
@@ -35,7 +35,9 @@ export type PlanningStackParamList = {
 
 /** Shopping stack param list */
 export type ShoppingStackParamList = {
-  ShoppingList: { planId?: string };
+  ShoppingHub: undefined; // NUEVA: Pantalla inicial con las opciones
+  CustomListBuilder: undefined; // NUEVA: Para elegir recetas sueltas
+  ShoppingList: { planId?: string; customListId?: string }; // MODIFICADA: Acepta planes o listas a medida
 };
 
 declare global {

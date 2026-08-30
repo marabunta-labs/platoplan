@@ -1,10 +1,11 @@
 /**
- * Smart Distribution - Slot-by-slot meal planner with variety scoring.
- *
- * Unlike `distribution.engine`, which only spaces identical recipes apart, this
- * planner scores every candidate against its neighbouring meals so the result
- * avoids repeating ingredients, food categories and heavy cooking days in a row.
- * It is a pure function and tolerates an under-filled pool by leaving gaps.
+ * Smart Distribution - Electrostatic Meal Planner
+ * 
+ * Uses a physics-based "repelling force" algorithm. 
+ * Instead of filling slots chronologically, it places recipes one by one 
+ * (starting with the most constrained: elaborate and most frequent). 
+ * Identical recipes repel each other with an inverse-square force (1/d^2), 
+ * causing them to naturally spread out uniformly across the available calendar.
  */
 
 import type { MealSlot } from '../models/enums';
@@ -35,21 +36,9 @@ export interface SmartPlanResult {
   warnings: string[];
 }
 
-/** Penalty weights, ordered by how strongly we want to avoid each situation. */
-const PENALTY = {
-  sameRecipeAdjacent: 1000,
-  sameRecipeWithinTwoDays: 400,
-  ingredientOverlap: 320,
-  sameCategoryAdjacent: 200,
-  elaborateOnNonElaborateDay: 150,
-  elaborateTwiceSameDay: 120,
-  repeatUsage: 12,
-} as const;
-
 interface RecipeProfile {
   recipe: Recipe;
   ingredientIds: Set<string>;
-  /** Ingredient category carrying the most quantity, used as a "type of dish". */
   dominantCategory: string | null;
   isElaborate: boolean;
 }
@@ -84,7 +73,6 @@ function buildProfile(recipe: Recipe, ingredientsById: Map<string, Ingredient>):
   };
 }
 
-/** Jaccard similarity between two ingredient sets, in [0, 1]. */
 function ingredientSimilarity(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 || b.size === 0) return 0;
   let intersection = 0;
@@ -101,11 +89,7 @@ function isSlotFree(dayIndex: number, slot: MealSlot, freeDays: FreeDay[]): bool
   return freeDay.type === 'ambas' || freeDay.type === slot;
 }
 
-/** All cookable slots in chronological order (lunch before dinner each day). */
-function buildSlots(
-  periodDays: number,
-  freeDays: FreeDay[]
-): { dayIndex: number; slot: MealSlot }[] {
+function buildSlots(periodDays: number, freeDays: FreeDay[]): { dayIndex: number; slot: MealSlot }[] {
   const slots: { dayIndex: number; slot: MealSlot }[] = [];
   for (let dayIndex = 0; dayIndex < periodDays; dayIndex++) {
     for (const slot of ['comida', 'cena'] as MealSlot[]) {
@@ -129,6 +113,7 @@ function mealDistance(
 
 export function planMeals(input: SmartPlanInput): SmartPlanResult {
   const { periodDays, freeDays, elaborateDays, ingredientsById } = input;
+  const warningsSet = new Set<string>();
 
   const profiles = new Map<string, RecipeProfile>();
   const registerProfiles = (selections: SelectedRecipe[]) => {
@@ -141,111 +126,141 @@ export function planMeals(input: SmartPlanInput): SmartPlanResult {
   registerProfiles(input.lunchSelections);
   registerProfiles(input.dinnerSelections);
 
-  // Remaining occurrences of each recipe, tracked per slot type.
-  const remaining: Record<MealSlot, Map<string, number>> = {
-    comida: new Map(input.lunchSelections.map((s) => [s.recipeId, s.count])),
-    cena: new Map(input.dinnerSelections.map((s) => [s.recipeId, s.count])),
-  };
-
   const slots = buildSlots(periodDays, freeDays);
+  const emptySlots = [...slots]; // Huecos disponibles
   const assignments: SmartAssignment[] = [];
-  const gaps: { dayIndex: number; slot: MealSlot }[] = [];
-  const warnings: string[] = [];
-  const usageCount = new Map<string, number>();
 
-  // Placing elaborate-heavy slots first would bias spacing, so we walk the period
-  // in order and pick the least-penalised remaining recipe for each slot.
-  for (const slot of slots) {
-    const pool = remaining[slot.slot];
-    const candidates = [...pool.entries()].filter(([, count]) => count > 0);
+  // 1. Agrupar las tareas (qué receta hay que colocar y cuántas veces)
+  interface PlacementTask {
+    recipeId: string;
+    targetSlotType: MealSlot;
+    count: number;
+    isElaborate: boolean;
+  }
 
-    if (candidates.length === 0) {
-      gaps.push(slot);
-      continue;
-    }
+  const tasks: PlacementTask[] = [];
+  for (const sel of input.lunchSelections) {
+    if (sel.count > 0) tasks.push({ recipeId: sel.recipeId, targetSlotType: 'comida', count: sel.count, isElaborate: profiles.get(sel.recipeId)?.isElaborate || false });
+  }
+  for (const sel of input.dinnerSelections) {
+    if (sel.count > 0) tasks.push({ recipeId: sel.recipeId, targetSlotType: 'cena', count: sel.count, isElaborate: profiles.get(sel.recipeId)?.isElaborate || false });
+  }
 
-    let bestRecipeId: string | null = null;
-    let bestScore = Number.POSITIVE_INFINITY;
+  // 2. ORDENAR TAREAS (Clave del nuevo algoritmo)
+  // Primero recetas elaboradas, y luego las que más se repiten (porque necesitan más espacio para separarse)
+  tasks.sort((a, b) => {
+    if (a.isElaborate && !b.isElaborate) return -1;
+    if (!a.isElaborate && b.isElaborate) return 1;
+    return b.count - a.count;
+  });
 
-    for (const [recipeId] of candidates) {
-      const profile = profiles.get(recipeId);
-      if (!profile) continue;
+  // 3. Colocar cada receta de forma inteligente
+  for (const task of tasks) {
+    const profile = profiles.get(task.recipeId);
+    if (!profile) continue;
 
-      let score = (usageCount.get(recipeId) ?? 0) * PENALTY.repeatUsage;
+    for (let i = 0; i < task.count; i++) {
+      const validEmptySlots = emptySlots.filter(s => s.slot === task.targetSlotType);
 
-      if (profile.isElaborate) {
-        if (elaborateDays.length > 0 && !elaborateDays.includes(slot.dayIndex)) {
-          score += PENALTY.elaborateOnNonElaborateDay;
+      if (validEmptySlots.length === 0) {
+        warningsSet.add(`No hay más huecos de ${task.targetSlotType} libres para asignar "${profile.recipe.name}".`);
+        continue;
+      }
+
+      let bestSlotIndex = -1;
+      let bestScore = Number.POSITIVE_INFINITY;
+
+      for (let j = 0; j < validEmptySlots.length; j++) {
+        const candidateSlot = validEmptySlots[j];
+        let score = 0;
+
+        // --- PENALIZACIONES ESTRICTAS ---
+        
+        // 1. Días de elaboración
+        if (task.isElaborate && elaborateDays.length > 0) {
+          if (!elaborateDays.includes(candidateSlot.dayIndex)) {
+            // Penalización altísima para forzar que use los días marcados si están disponibles
+            score += 50000; 
+          }
         }
-        const sameDayElaborate = assignments.some(
-          (a) =>
-            a.dayIndex === slot.dayIndex && profiles.get(a.recipeId)?.isElaborate === true
-        );
-        if (sameDayElaborate) {
-          score += PENALTY.elaborateTwiceSameDay;
+
+        // --- EVALUAR CONTRA LAS COMIDAS YA COLOCADAS ---
+        for (const assigned of assignments) {
+          const dist = mealDistance(assigned, candidateSlot);
+          if (dist === 0) continue;
+
+          if (assigned.recipeId === task.recipeId) {
+            // FUERZA DE REPULSIÓN (Magia del algoritmo)
+            // Si dist=1 -> 100000 pts. Si dist=2 -> 25000 pts. Si dist=5 -> 4000 pts.
+            // Esto obliga a la receta a alejarse lo máximo posible matemáticamente de sí misma.
+            score += 100000 / (dist * dist);
+          } else {
+            const otherProfile = profiles.get(assigned.recipeId);
+            if (!otherProfile) continue;
+
+            // 2. Evitar dos elaboradas el mismo día (comida y cena)
+            if (task.isElaborate && otherProfile.isElaborate && assigned.dayIndex === candidateSlot.dayIndex) {
+              score += 20000;
+            }
+
+            // 3. Evaluar solapamiento de ingredientes y categorías (solo si están cerca)
+            if (dist <= 4) {
+               const proximity = (5 - dist) / 4; // De 1 (consecutivo) a 0.25 (a 4 comidas de distancia)
+               const similarity = ingredientSimilarity(profile.ingredientIds, otherProfile.ingredientIds);
+               
+               score += similarity * 500 * proximity;
+
+               if (profile.dominantCategory && profile.dominantCategory === otherProfile.dominantCategory && dist <= 2) {
+                 score += 300 * proximity;
+               }
+            }
+          }
+        }
+
+        // ¿Es este el mejor hueco hasta ahora?
+        if (score < bestScore) {
+          bestScore = score;
+          // Buscar su índice real en el array general de emptySlots
+          bestSlotIndex = emptySlots.findIndex(s => s.dayIndex === candidateSlot.dayIndex && s.slot === candidateSlot.slot);
         }
       }
 
-      // Compare against the meals close enough in time for the user to notice.
-      for (const assigned of assignments) {
-        const distance = mealDistance(assigned, slot);
-        if (distance > 4) continue;
+      // 4. Asignar el mejor hueco encontrado
+      if (bestSlotIndex !== -1) {
+        const chosenSlot = emptySlots[bestSlotIndex];
+        assignments.push({
+          dayIndex: chosenSlot.dayIndex,
+          slot: chosenSlot.slot,
+          recipeId: task.recipeId
+        });
+        emptySlots.splice(bestSlotIndex, 1); // Quitar el hueco de los disponibles
 
-        if (assigned.recipeId === recipeId) {
-          score +=
-            distance <= 1 ? PENALTY.sameRecipeAdjacent : PENALTY.sameRecipeWithinTwoDays;
+        // --- ALERTAS INFORMATIVAS ---
+        if (task.isElaborate && elaborateDays.length > 0 && !elaborateDays.includes(chosenSlot.dayIndex)) {
+          warningsSet.add(`"${profile.recipe.name}" es elaborada, pero no quedaron días marcados libres para prepararla.`);
         }
 
-        const other = profiles.get(assigned.recipeId);
-        if (!other) continue;
+        // Revisar a qué distancia mínima ha quedado de sí misma
+        const minDist = assignments
+          .filter(a => a.recipeId === task.recipeId && a !== assignments[assignments.length - 1])
+          .reduce((min, a) => Math.min(min, mealDistance(a, chosenSlot)), Number.POSITIVE_INFINITY);
 
-        // Proximity fades linearly: the previous meal matters most.
-        const proximity = (5 - distance) / 4;
-
-        const similarity = ingredientSimilarity(profile.ingredientIds, other.ingredientIds);
-        score += similarity * PENALTY.ingredientOverlap * proximity;
-
-        if (
-          profile.dominantCategory &&
-          profile.dominantCategory === other.dominantCategory &&
-          distance <= 2
-        ) {
-          score += PENALTY.sameCategoryAdjacent * proximity;
+        if (minDist <= 2) {
+          warningsSet.add(`"${profile.recipe.name}" se repite casi seguido por falta de espacio en el calendario.`);
         }
       }
-
-      if (score < bestScore) {
-        bestScore = score;
-        bestRecipeId = recipeId;
-      }
-    }
-
-    if (!bestRecipeId) {
-      gaps.push(slot);
-      continue;
-    }
-
-    assignments.push({ dayIndex: slot.dayIndex, slot: slot.slot, recipeId: bestRecipeId });
-    pool.set(bestRecipeId, (pool.get(bestRecipeId) ?? 1) - 1);
-    usageCount.set(bestRecipeId, (usageCount.get(bestRecipeId) ?? 0) + 1);
-
-    if (bestScore >= PENALTY.sameRecipeAdjacent) {
-      const name = profiles.get(bestRecipeId)?.recipe.name ?? bestRecipeId;
-      warnings.push(
-        `Día ${slot.dayIndex + 1} (${slot.slot}): "${name}" se repite muy seguido; no había alternativa disponible.`
-      );
     }
   }
 
-  const leftover = [...remaining.comida.values(), ...remaining.cena.values()].reduce(
-    (sum, count) => sum + Math.max(0, count),
-    0
-  );
-  if (leftover > 0) {
-    warnings.push(
-      `${leftover} selección(es) no cupieron en el período y se han descartado.`
-    );
-  }
+  // Ordenar el resultado cronológicamente para que la interfaz lo reciba limpio
+  assignments.sort((a, b) => {
+    if (a.dayIndex !== b.dayIndex) return a.dayIndex - b.dayIndex;
+    return a.slot === 'comida' ? -1 : 1;
+  });
 
-  return { assignments, gaps, warnings };
+  return { 
+    assignments, 
+    gaps: emptySlots, // Los huecos que han quedado vacíos al final
+    warnings: Array.from(warningsSet) 
+  };
 }

@@ -49,10 +49,31 @@ export function RecipeSelectionScreen() {
   const [plan, setPlan] = useState<MenuPlan | null>(null);
   const [planLoading, setPlanLoading] = useState(true);
 
+  const [lunchSelections, setLunchSelections] = useState<RecipeSelection[]>([]);
+  const [dinnerSelections, setDinnerSelections] = useState<RecipeSelection[]>([]);
+
   useEffect(() => {
     setPlanLoading(true);
     loadPlan(planId).then((p) => {
       setPlan(p);
+      
+      // MEJORA: Si el plan ya tiene recetas asignadas (estamos editando), las cargamos en los contadores
+      if (p && p.assignments && p.assignments.length > 0) {
+        const lunchCounts: Record<string, number> = {};
+        const dinnerCounts: Record<string, number> = {};
+        
+        p.assignments.forEach(assignment => {
+          if (assignment.slot === 'comida') {
+            lunchCounts[assignment.recipeId] = (lunchCounts[assignment.recipeId] || 0) + 1;
+          } else if (assignment.slot === 'cena') {
+            dinnerCounts[assignment.recipeId] = (dinnerCounts[assignment.recipeId] || 0) + 1;
+          }
+        });
+        
+        setLunchSelections(Object.entries(lunchCounts).map(([recipeId, count]) => ({ recipeId, count })));
+        setDinnerSelections(Object.entries(dinnerCounts).map(([recipeId, count]) => ({ recipeId, count })));
+      }
+      
       setPlanLoading(false);
     });
   }, [planId]);
@@ -72,9 +93,6 @@ export function RecipeSelectionScreen() {
     ).length;
     return plan.periodDays - dinnerFreeDays;
   }, [plan]);
-
-  const [lunchSelections, setLunchSelections] = useState<RecipeSelection[]>([]);
-  const [dinnerSelections, setDinnerSelections] = useState<RecipeSelection[]>([]);
 
   // Filter recipes by type
   const lunchRecipes = useMemo(
@@ -282,10 +300,14 @@ export function RecipeSelectionScreen() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} accessibilityRole="button" accessibilityLabel={t('common.back')}>
+        <TouchableOpacity onPress={() => navigation.goBack()} accessibilityRole="button">
           <Text style={styles.backButton}>{t('common.back')}</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{t('planning.selectRecipes')}</Text>
+        <View style={{ flex: 1 }} />
+        <TouchableOpacity onPress={() => navigation.navigate('PlanHistory' as any)} accessibilityRole="button">
+          <Text style={{ fontSize: 15, color: '#C0392B', fontWeight: '600' }}>Salir</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Lunch Section */}
@@ -369,8 +391,6 @@ export function RecipeSelectionScreen() {
         onPress={handleConfirm}
         disabled={!canConfirm || generating}
         accessibilityRole="button"
-        accessibilityLabel={t('planning.confirm')}
-        accessibilityState={{ disabled: !canConfirm || generating }}
       >
         <Text
           style={[
@@ -378,7 +398,7 @@ export function RecipeSelectionScreen() {
             (!canConfirm || generating) && styles.confirmButtonTextDisabled,
           ]}
         >
-          {generating ? t('planning.generating') : t('planning.generatePlan')}
+          {generating ? t('planning.generating') : 'Siguiente'}
         </Text>
       </TouchableOpacity>
     </ScrollView>
@@ -386,153 +406,33 @@ export function RecipeSelectionScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
-  content: {
-    padding: 16,
-    paddingBottom: 40,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  backButton: {
-    fontSize: 15,
-    color: '#007AFF',
-    fontWeight: '500',
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#1a1a1a',
-    marginLeft: 12,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#1a1a1a',
-    marginBottom: 24,
-  },
-  section: {
-    marginBottom: 24,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-  },
-  counter: {
-    fontSize: 16,
-    fontWeight: '700',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  counterMatch: {
-    backgroundColor: '#e8f5e9',
-    color: '#2e7d32',
-  },
-  counterMismatch: {
-    backgroundColor: '#fff3e0',
-    color: '#e65100',
-  },
-  diffText: {
-    fontSize: 13,
-    color: '#e65100',
-    marginBottom: 8,
-  },
-  emptyText: {
-    fontSize: 14,
-    color: '#888',
-    fontStyle: 'italic',
-    paddingVertical: 12,
-  },
-  recipeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#eee',
-  },
-  recipeInfo: {
-    flex: 1,
-    marginRight: 12,
-  },
-  recipeName: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: '#1a1a1a',
-  },
-  recipeMeta: {
-    fontSize: 12,
-    color: '#888',
-    marginTop: 2,
-  },
-  counterContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  counterButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#007AFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  counterButtonDisabled: {
-    backgroundColor: '#ddd',
-  },
-  counterButtonText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  counterValue: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#333',
-    minWidth: 24,
-    textAlign: 'center',
-  },
-  warningBox: {
-    backgroundColor: '#fff3e0',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-  },
-  warningText: {
-    fontSize: 13,
-    color: '#e65100',
-  },
-  confirmButton: {
-    backgroundColor: '#4CAF50',
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  confirmButtonDisabled: {
-    backgroundColor: '#ccc',
-  },
-  confirmButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  confirmButtonTextDisabled: {
-    color: '#888',
-  },
+  container: { flex: 1, backgroundColor: '#fff' },
+  content: { padding: 16, paddingBottom: 40 },
+  header: { flexDirection: 'row', alignItems: 'center', marginBottom: 24 },
+  backButton: { fontSize: 15, color: '#007AFF', fontWeight: '500' },
+  headerTitle: { fontSize: 24, fontWeight: '700', color: '#1a1a1a', marginLeft: 12 },
+  title: { fontSize: 24, fontWeight: '700', color: '#1a1a1a', marginBottom: 24 },
+  section: { marginBottom: 24 },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  sectionTitle: { fontSize: 18, fontWeight: '600', color: '#333' },
+  counter: { fontSize: 16, fontWeight: '700', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, overflow: 'hidden' },
+  counterMatch: { backgroundColor: '#e8f5e9', color: '#2e7d32' },
+  counterMismatch: { backgroundColor: '#fff3e0', color: '#e65100' },
+  diffText: { fontSize: 13, color: '#e65100', marginBottom: 8 },
+  emptyText: { fontSize: 14, color: '#888', fontStyle: 'italic', paddingVertical: 12 },
+  recipeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#eee' },
+  recipeInfo: { flex: 1, marginRight: 12 },
+  recipeName: { fontSize: 15, fontWeight: '500', color: '#1a1a1a' },
+  recipeMeta: { fontSize: 12, color: '#888', marginTop: 2 },
+  counterContainer: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  counterButton: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#007AFF', alignItems: 'center', justifyContent: 'center' },
+  counterButtonDisabled: { backgroundColor: '#ddd' },
+  counterButtonText: { fontSize: 18, fontWeight: '600', color: '#fff' },
+  counterValue: { fontSize: 16, fontWeight: '700', color: '#333', minWidth: 24, textAlign: 'center' },
+  warningBox: { backgroundColor: '#fff3e0', borderRadius: 8, padding: 12, marginBottom: 16 },
+  warningText: { fontSize: 13, color: '#e65100' },
+  confirmButton: { backgroundColor: '#4CAF50', borderRadius: 10, paddingVertical: 14, alignItems: 'center', marginTop: 8 },
+  confirmButtonDisabled: { backgroundColor: '#ccc' },
+  confirmButtonText: { fontSize: 16, fontWeight: '600', color: '#fff' },
+  confirmButtonTextDisabled: { color: '#888' },
 });

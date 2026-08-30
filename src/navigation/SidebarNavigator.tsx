@@ -18,7 +18,11 @@ import type {
 
 import { PantryScreen } from '../screens/pantry/PantryScreen';
 import { SuggestedRecipesScreen } from '../screens/pantry/SuggestedRecipesScreen';
+
+// --- NUEVAS IMPORTACIONES DE COMPRAS ---
 import { ShoppingListScreen } from '../screens/shopping/ShoppingListScreen';
+import { ShoppingHubScreen } from '../screens/shopping/ShoppingHubScreen';
+import { CustomListBuilderScreen } from '../screens/shopping/CustomListBuilderScreen';
 
 import {
   RecipeListScreen,
@@ -75,7 +79,10 @@ const ShoppingStack = createNativeStackNavigator<ShoppingStackParamList>();
 
 function ShoppingStackNavigator() {
   return (
-    <ShoppingStack.Navigator screenOptions={{ headerShown: false }}>
+    // CAMBIO: Definimos ShoppingHub como initialRouteName e incluimos las 3 pantallas
+    <ShoppingStack.Navigator initialRouteName="ShoppingHub" screenOptions={{ headerShown: false }}>
+      <ShoppingStack.Screen name="ShoppingHub" component={ShoppingHubScreen} />
+      <ShoppingStack.Screen name="CustomListBuilder" component={CustomListBuilderScreen} />
       <ShoppingStack.Screen name="ShoppingList" component={ShoppingListScreen} />
     </ShoppingStack.Navigator>
   );

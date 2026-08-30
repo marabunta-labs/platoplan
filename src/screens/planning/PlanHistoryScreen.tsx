@@ -37,9 +37,14 @@ export function PlanHistoryScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Planes guardados</Text>
         <Text style={styles.subtitle}>Abre un plan para revisarlo o editar sus comidas.</Text>
-        <TouchableOpacity style={styles.newPlanButton} onPress={() => navigation.navigate('PlanConfig')} accessibilityRole="button"><Text style={styles.newPlanText}>+ Nuevo plan</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.newPlanButton} onPress={() => navigation.navigate('PlanConfig')} accessibilityRole="button">
+          <Text style={styles.newPlanText}>+ Nuevo plan</Text>
+        </TouchableOpacity>
       </View>
-      {loading ? <View style={styles.center}><ActivityIndicator size="large" color="#007AFF" /></View> : plans.length === 0 ? (
+      
+      {loading ? (
+        <View style={styles.center}><ActivityIndicator size="large" color="#007AFF" /></View>
+      ) : plans.length === 0 ? (
         <EmptyState message="Todavía no hay planes guardados." />
       ) : (
         <FlatList
@@ -50,14 +55,34 @@ export function PlanHistoryScreen() {
           refreshing={loading}
           renderItem={({ item }) => (
             <View style={styles.card}>
-              <TouchableOpacity onPress={() => navigation.navigate('PlanCalendar', { planId: item.id })} accessibilityRole="button">
-              <View>
-                <Text style={styles.cardTitle}>{formatDate(item.startDate)} · {item.periodDays} días</Text>
-                <Text style={styles.cardDetails}>{item.servings} personas · {item.assignments.length} comidas asignadas</Text>
-              </View>
-              <Text style={styles.edit}>Abrir y editar ›</Text>
+              {/* CAMBIO: Ahora enviamos a PlanConfig con el ID del plan como parámetro */}
+              <TouchableOpacity 
+                onPress={() => {
+                  // Usamos 'as any' temporalmente por si no has actualizado types.ts para PlanConfig
+                  navigation.navigate('PlanConfig' as any, { planId: item.id, isEditing: true });
+                }} 
+                accessibilityRole="button"
+              >
+                <View>
+                  {/* CAMBIO: Mostramos el nombre del plan si existe */}
+                  <Text style={styles.cardTitle}>
+                    {item.name ? `${item.name} - ` : ''}{formatDate(item.startDate)} · {item.periodDays} días
+                  </Text>
+                  <Text style={styles.cardDetails}>
+                    {item.servings} personas · {item.assignments.length} comidas asignadas
+                  </Text>
+                </View>
+                <Text style={styles.edit}>Abrir y editar ›</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.deleteButton} onPress={() => AlertCompat.alert('Eliminar plan', 'Esta acción eliminará el plan y su lista de compra.', [{ text: 'Cancelar', style: 'cancel' }, { text: 'Eliminar', style: 'destructive', onPress: async () => { await deletePlan(item.id); await refresh(); } }])} accessibilityRole="button">
+              
+              <TouchableOpacity 
+                style={styles.deleteButton} 
+                onPress={() => AlertCompat.alert('Eliminar plan', 'Esta acción eliminará el plan y su lista de compra.', [
+                  { text: 'Cancelar', style: 'cancel' }, 
+                  { text: 'Eliminar', style: 'destructive', onPress: async () => { await deletePlan(item.id); await refresh(); } }
+                ])} 
+                accessibilityRole="button"
+              >
                 <Text style={styles.deleteText}>Eliminar</Text>
               </TouchableOpacity>
             </View>

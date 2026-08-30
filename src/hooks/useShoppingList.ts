@@ -34,7 +34,7 @@ export function useShoppingList() {
         setLoading(false);
       }
     },
-    [db]
+    [db] // Dependencia de db actualizada internamente por el contexto
   );
 
   // Re-fetch the current shopping list when remote changes invalidate the table
@@ -52,10 +52,28 @@ export function useShoppingList() {
       setError(null);
       try {
         await service.generate(planId);
-        // The persisted list is re-read with ingredient details for display.
         return await loadByPlanId(planId);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Error al generar la lista de compra');
+        throw e;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [db, loadByPlanId]
+  );
+
+  // NUEVO: Generar lista a medida sin necesidad de un plan
+  const generateCustom = useCallback(
+    async (customId: string, recipeCounts: Record<string, number>) => {
+      setLoading(true);
+      setError(null);
+      try {
+        await service.generateCustom(customId, recipeCounts);
+        // La cargamos pasándole el ID virtual para que el estado se actualice
+        return await loadByPlanId(customId);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Error al generar la lista a medida');
         throw e;
       } finally {
         setLoading(false);
@@ -70,7 +88,6 @@ export function useShoppingList() {
       setError(null);
       try {
         await service.editQuantity(listId, itemId, quantity);
-        // Re-load so joined ingredient information used by the web UI remains present.
         const updated = await loadByPlanId(currentPlanIdRef.current ?? '');
         return updated;
       } catch (e: unknown) {
@@ -128,6 +145,7 @@ export function useShoppingList() {
     loading,
     error,
     generate,
+    generateCustom, // Exponemos la nueva función
     editQuantity,
     removeItem,
     regenerate,

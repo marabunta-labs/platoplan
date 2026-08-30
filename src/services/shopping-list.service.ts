@@ -16,6 +16,7 @@ import * as recipeRepository from '../repositories/recipe.repository';
 
 export interface IShoppingListService {
   generate(planId: string): Promise<ShoppingList>;
+  generateCustom(customId: string, recipeCounts: Record<string, number>): Promise<ShoppingList>;
   editQuantity(listId: string, itemId: string, quantity: number): Promise<ShoppingList>;
   removeItem(listId: string, itemId: string): Promise<ShoppingList>;
   getByPlanId(planId: string): Promise<ShoppingList | null>;
@@ -42,65 +43,72 @@ export class ShoppingListService implements IShoppingListService {
     this.ingredientRepo = new IngredientRepository(db);
   }
 
-  /**
-   * Generates a shopping list for a given plan.
-   *
-   * Algorithm:
-   * 1. Get the plan with all assignments
-   * 2. For each assignment, get the recipe's ingredients
-   * 3. Aggregate: sum total quantities for each unique ingredient across all recipes
-   * 4. For each aggregated ingredient, get pantry quantity available
-   * 5. Calculate: netQuantity = max(0, totalNeeded - pantryAvailable)
-   * 6. If netQuantity === 0, exclude the ingredient
-   * 7. Calculate: purchaseUnits = ceil(netQuantity / purchaseFormat.quantity)
-   * 8. Group items by category, sort alphabetically by name within each group
-   * 9. Persist the shopping list
-   */
   async generate(planId: string): Promise<ShoppingList> {
-    // Step 1: Get plan with assignments
     const plan = await planRepository.getPlanById(this.db, planId);
     if (!plan) {
       throw new Error(`Plan not found: ${planId}`);
     }
 
-    // Step 2 & 3: Aggregate ingredient quantities across all assigned recipes
     const aggregated = await this.aggregateIngredients(
       plan.assignments.map((a) => a.recipeId),
       plan.servings
     );
 
-    // Steps 4-7: Apply pantry deductions and calculate purchase units
     const items = await this.calculateShoppingItems(aggregated);
-
-    // Step 8: Group by category, sort alphabetically within groups
     const sortedItems = await this.sortItemsByCategoryAndName(items);
 
-    // Step 9: Persist. Regenerating an already-created list must replace it;
-    // otherwise the screen can read an older duplicate for the same plan.
     const existing = await this.shoppingListRepo.getByPlanId(planId);
     const list = existing
       ? await this.shoppingListRepo.update(existing.id, sortedItems)
       : await this.shoppingListRepo.create(planId, sortedItems);
-    return list;
+    
+    return this.hydrateIngredients(list);
   }
 
-  /**
-   * Edits the purchase units for a specific item in the list.
-   * Validates that quantity is between 1 and 999.
-   * Returns the updated shopping list.
-   */
+  // NUEVO MÉTODO: Genera la lista basándose en un diccionario { recipeId: cantidad }
+  async generateCustom(customId: string, recipeCounts: Record<string, number>): Promise<ShoppingList> {
+    const recipeIds: string[] = [];
+    
+    // Multiplicamos los IDs de recetas según la cantidad seleccionada
+    for (const [id, count] of Object.entries(recipeCounts)) {
+      for (let i = 0; i < count; i++) {
+        recipeIds.push(id);
+      }
+    }
+
+    // TRUCO DB: Insertamos un "plan fantasma" para satisfacer la Foreign Key de SQLite/Supabase.
+    // Usamos INSERT OR IGNORE para que no falle si ya lo habíamos creado antes.
+    const now = new Date().toISOString();
+    await this.db.runAsync(`
+      INSERT OR IGNORE INTO plans (id, period_days, start_date, servings, status, created_at, updated_at)
+      VALUES (?, 1, ?, 1, 'draft', ?, ?)
+    `, [customId, now, now, now]);
+
+    // Usamos 0 en servings para que aplique las raciones por defecto de cada receta
+    const aggregated = await this.aggregateIngredients(recipeIds, 0);
+    const items = await this.calculateShoppingItems(aggregated);
+    const sortedItems = await this.sortItemsByCategoryAndName(items);
+
+    const existing = await this.shoppingListRepo.getByPlanId(customId);
+    const list = existing
+      ? await this.shoppingListRepo.update(existing.id, sortedItems)
+      : await this.shoppingListRepo.create(customId, sortedItems);
+      
+    return this.hydrateIngredients(list);
+  }
+
   async editQuantity(listId: string, itemId: string, quantity: number): Promise<ShoppingList> {
-    if (quantity < 1 || quantity > 999 || !Number.isInteger(quantity)) {
+    // CAMBIO: Ahora aceptamos quantity >= 0 en lugar de > 0
+    if (quantity < 0 || quantity > 999 || !Number.isInteger(quantity)) {
       const error: ValidationError = {
         type: 'validation',
-        fields: [{ field: 'quantity', message: 'Quantity must be an integer between 1 and 999' }],
+        fields: [{ field: 'quantity', message: 'Quantity must be an integer between 0 and 999' }],
       };
       throw error;
     }
 
     await this.shoppingListRepo.editQuantity(itemId, quantity);
 
-    // Fetch the list to find its planId
     const list = await this.findListById(listId);
     if (!list) {
       throw new Error(`Shopping list not found: ${listId}`);
@@ -108,10 +116,6 @@ export class ShoppingListService implements IShoppingListService {
     return list;
   }
 
-  /**
-   * Removes an item from the shopping list (soft delete).
-   * Returns the updated shopping list.
-   */
   async removeItem(listId: string, itemId: string): Promise<ShoppingList> {
     await this.shoppingListRepo.removeItem(itemId);
 
@@ -122,18 +126,11 @@ export class ShoppingListService implements IShoppingListService {
     return list;
   }
 
-  /**
-   * Returns the shopping list for a given plan, or null if none exists.
-   */
   async getByPlanId(planId: string): Promise<ShoppingList | null> {
     const list = await this.shoppingListRepo.getByPlanId(planId);
     return list ? this.hydrateIngredients(list) : null;
   }
 
-  /**
-   * Regenerates an existing shopping list by recomputing from the plan.
-   * Replaces existing items with fresh calculations.
-   */
   async regenerate(listId: string): Promise<ShoppingList> {
     const existingList = await this.findListById(listId);
     if (!existingList) {
@@ -141,14 +138,21 @@ export class ShoppingListService implements IShoppingListService {
     }
 
     const plan = await planRepository.getPlanById(this.db, existingList.planId);
-    if (!plan) {
-      throw new Error(`Plan not found: ${existingList.planId}`);
-    }
+    let aggregated: AggregatedIngredient[];
 
-    const aggregated = await this.aggregateIngredients(
-      plan.assignments.map((a) => a.recipeId),
-      plan.servings
-    );
+    // LÓGICA INTELIGENTE: Si el plan existe pero no tiene asignaciones (es el fantasma), 
+    // reconstruimos desde la lista para que funcione correctamente la regeneración
+    if (!plan || (plan.id === '00000000-0000-0000-0000-000000000000' && plan.assignments.length === 0)) {
+      aggregated = existingList.items.map((item) => ({
+        ingredientId: item.ingredientId,
+        totalQuantityNeeded: item.totalQuantityNeeded,
+      }));
+    } else {
+      aggregated = await this.aggregateIngredients(
+        plan.assignments.map((a) => a.recipeId),
+        plan.servings
+      );
+    }
 
     const items = await this.calculateShoppingItems(aggregated);
     const sortedItems = await this.sortItemsByCategoryAndName(items);
@@ -156,12 +160,6 @@ export class ShoppingListService implements IShoppingListService {
     return this.hydrateIngredients(await this.shoppingListRepo.update(listId, sortedItems));
   }
 
-  /**
-   * Aggregates ingredient quantities across all provided recipe IDs.
-   * If a recipe appears multiple times, its ingredients are counted multiple times.
-   * Quantities are scaled by planServings / recipe.servings so a plan for more
-   * diners buys proportionally more of each ingredient.
-   */
   private async aggregateIngredients(
     recipeIds: string[],
     planServings = 0
@@ -192,36 +190,27 @@ export class ShoppingListService implements IShoppingListService {
     }));
   }
 
-  /**
-   * Applies pantry deductions and calculates purchase units for each aggregated ingredient.
-   * Excludes ingredients fully covered by pantry (netQuantity === 0).
-   */
   private async calculateShoppingItems(
     aggregated: AggregatedIngredient[]
   ): Promise<CreateShoppingListItemInput[]> {
     const items: CreateShoppingListItemInput[] = [];
 
+    // Iteramos ÚNICAMENTE sobre los ingredientes resultantes de las recetas del plan
     for (const agg of aggregated) {
-      // Get pantry quantity
       const pantryEntry = await this.pantryRepo.getByIngredientId(agg.ingredientId);
       const pantryAvailable = pantryEntry ? pantryEntry.quantity : 0;
-
-      // Calculate net quantity
+      
+      // Cantidad neta real a comprar
       const netQuantity = Math.max(0, agg.totalQuantityNeeded - pantryAvailable);
 
-      // Exclude if fully covered by pantry
-      if (netQuantity === 0) {
-        continue;
-      }
-
-      // Get ingredient for purchase format
       const ingredient = await this.ingredientRepo.getById(agg.ingredientId);
       if (!ingredient) {
         continue;
       }
 
-      // Calculate purchase units
-      const purchaseUnits = Math.ceil(netQuantity / ingredient.purchaseFormat.quantity);
+      const purchaseUnits = ingredient.purchaseFormat?.quantity 
+        ? Math.ceil(netQuantity / ingredient.purchaseFormat.quantity)
+        : netQuantity;
 
       items.push({
         ingredientId: agg.ingredientId,
@@ -235,14 +224,9 @@ export class ShoppingListService implements IShoppingListService {
     return items;
   }
 
-  /**
-   * Sorts items by ingredient category (alphabetically), then by ingredient name
-   * within each category group.
-   */
   private async sortItemsByCategoryAndName(
     items: CreateShoppingListItemInput[]
   ): Promise<CreateShoppingListItemInput[]> {
-    // Fetch ingredient details for sorting
     const ingredientMap = new Map<string, Ingredient>();
     for (const item of items) {
       const ingredient = await this.ingredientRepo.getById(item.ingredientId);
@@ -254,27 +238,13 @@ export class ShoppingListService implements IShoppingListService {
     return [...items].sort((a, b) => {
       const ingA = ingredientMap.get(a.ingredientId);
       const ingB = ingredientMap.get(b.ingredientId);
-
-      if (!ingA || !ingB) {
-        return 0;
-      }
-
-      // First sort by category
+      if (!ingA || !ingB) return 0;
       const categoryCompare = ingA.category.localeCompare(ingB.category);
-      if (categoryCompare !== 0) {
-        return categoryCompare;
-      }
-
-      // Then sort alphabetically by name within category
+      if (categoryCompare !== 0) return categoryCompare;
       return ingA.name.localeCompare(ingB.name);
     });
   }
 
-  /**
-   * Marks the shopping list associated with a plan as stale.
-   * Called when the plan is modified (assignment added/removed/swapped) after list generation.
-   * No-op if no shopping list exists for the plan.
-   */
   async markPlanModified(planId: string): Promise<void> {
     const list = await this.shoppingListRepo.getByPlanId(planId);
     if (list) {
@@ -282,28 +252,15 @@ export class ShoppingListService implements IShoppingListService {
     }
   }
 
-  /**
-   * Finds a shopping list by its ID by querying all plans.
-   * Since ShoppingListRepository uses getByPlanId, we need to find the list
-   * through the plan association.
-   */
   private async findListById(listId: string): Promise<ShoppingList | null> {
-    // The repository doesn't have a getById method directly.
-    // We use the database to find the plan_id for this list.
     const row = await this.db.getFirstAsync<{ plan_id: string }>(
       'SELECT plan_id FROM shopping_lists WHERE id = ?',
       [listId]
     );
-
-    if (!row) {
-      return null;
-    }
-
+    if (!row) return null;
     return this.shoppingListRepo.getByPlanId(row.plan_id);
   }
 
-  /** The list repositories store IDs only. The UI needs the actual ingredient
-   * data to render names, formats and categories. */
   private async hydrateIngredients(list: ShoppingList): Promise<ShoppingList> {
     const ingredients = await Promise.all(list.items.map((item) => this.ingredientRepo.getById(item.ingredientId)));
     return {

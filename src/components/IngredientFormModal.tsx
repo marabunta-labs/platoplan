@@ -30,6 +30,7 @@ import { useI18n } from '../i18n';
 import { DEFAULT_INGREDIENT_CATEGORIES } from '../constants/ingredient-categories';
 import { useTheme } from '../context/ThemeContext';
 import type { ThemeColors } from '../constants/theme';
+import { AlertCompat } from '../utils/alert';
 
 export interface IngredientFormModalProps {
   visible: boolean;
@@ -38,6 +39,8 @@ export interface IngredientFormModalProps {
   initialName?: string;
   ingredient?: Ingredient;
   categorySuggestions?: string[];
+  /** Deletes the ingredient (only relevant in edit mode). May be async. */
+  onDeleted?: (ingredientId: string) => void | Promise<void>;
 }
 
 interface FormErrors {
@@ -55,6 +58,7 @@ export function IngredientFormModal({
   initialName,
   ingredient,
   categorySuggestions = [],
+  onDeleted,
 }: IngredientFormModalProps) {
   const { t } = useI18n();
   const db = useDatabase();
@@ -235,6 +239,47 @@ export function IngredientFormModal({
     ingredient,
   ]);
 
+  /**
+   * Deletes the ingredient after confirming. Warns if it is used in recipes,
+   * since deleting it will also remove it from those recipes (and shopping lists).
+   */
+  const handleDelete = useCallback(async () => {
+    if (!ingredient || !onDeleted) return;
+    const service = new IngredientService(db);
+
+    let usageNote = '';
+    try {
+      const recipes = await service.getRecipesUsing(ingredient.id);
+      if (recipes.length > 0) {
+        usageNote = '\n\n' + t('ingredientModal.deleteUsedWarning', { count: recipes.length });
+      }
+    } catch {
+      // If the usage check fails, still allow deletion with the generic message.
+    }
+
+    AlertCompat.alert(
+      t('ingredientModal.deleteTitle'),
+      t('ingredientModal.deleteConfirm', { name: ingredient.name }) + usageNote,
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('common.delete'),
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Delegate the actual deletion to the parent (via the hook), so
+              // the change propagates to every open list.
+              await onDeleted(ingredient.id);
+              onClose();
+            } catch {
+              AlertCompat.alert(t('common.error'), t('ingredientModal.deleteError'));
+            }
+          },
+        },
+      ]
+    );
+  }, [ingredient, db, t, onDeleted, onClose]);
+
   return (
     <Modal
       visible={visible}
@@ -410,6 +455,18 @@ export function IngredientFormModal({
                   </View>
                 )}
               </View>
+
+              {/* Delete (edit mode only) */}
+              {ingredient && onDeleted && (
+                <TouchableOpacity
+                  style={styles.deleteButton}
+                  onPress={handleDelete}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('ingredientModal.deleteTitle')}
+                >
+                  <Text style={styles.deleteButtonText}>🗑️ {t('ingredientModal.deleteTitle')}</Text>
+                </TouchableOpacity>
+              )}
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
@@ -425,6 +482,20 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 16,
+  },
+  deleteButton: {
+    marginTop: 8,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    backgroundColor: colors.dangerBg,
+    borderWidth: 1,
+    borderColor: colors.danger,
+  },
+  deleteButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.danger,
   },
   keyboardAvoidingView: {
     width: '100%',

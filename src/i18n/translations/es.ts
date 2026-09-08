@@ -344,6 +344,10 @@ export const es = {
     quantityPositive: 'La cantidad debe ser un número positivo',
     categoryRequired: 'La categoría es obligatoria',
     duplicateName: 'Ya existe un ingrediente con este nombre',
+    deleteTitle: 'Eliminar ingrediente',
+    deleteConfirm: '¿Seguro que quieres eliminar "{name}"?',
+    deleteUsedWarning: 'Se usa en {count} receta(s); también se quitará de ellas y de las listas de la compra.',
+    deleteError: 'No se pudo eliminar el ingrediente.',
   },
   terms: {
     title: 'Términos y Condiciones',

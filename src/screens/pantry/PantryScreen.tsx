@@ -50,7 +50,7 @@ export function PantryScreen() {
     removeEntry,
     getPreparableRecipes,
   } = usePantry();
-  const { ingredients: availableIngredients, refresh: refreshIngredients } = useIngredients();
+  const { ingredients: availableIngredients, refresh: refreshIngredients, deleteIngredient } = useIngredients();
   const navigation = useNavigation<NativeStackNavigationProp<PantryStackParamList>>();
 
   const [isAddModalVisible, setIsAddModalVisible] = useState(false);
@@ -155,6 +155,16 @@ export function PantryScreen() {
   );
 
   // Handle new ingredient creation from IngredientFormModal (Req 2.1, 2.2, 2.3)
+  const handleIngredientDeleted = useCallback(
+    async (ingredientId: string) => {
+      await deleteIngredient(ingredientId);
+      setIsIngredientFormVisible(false);
+      setEditingIngredient(undefined);
+      await refreshIngredients();
+    },
+    [deleteIngredient, refreshIngredients]
+  );
+
   const handleIngredientCreated = useCallback(
     async (newIngredient: Ingredient) => {
       await refreshIngredients();
@@ -301,6 +311,7 @@ export function PantryScreen() {
           initialName={ingredientFormInitialName}
           ingredient={editingIngredient}
           categorySuggestions={categorySuggestions}
+          onDeleted={handleIngredientDeleted}
         />
       </View>
     </SafeAreaView>

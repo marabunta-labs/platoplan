@@ -10,6 +10,7 @@ import type { CreateRecipeInput, UpdateRecipeInput } from '../models/inputs';
 import { useDatabase } from '../context/DatabaseContext';
 import { createRecipeService } from '../services/recipe.service';
 import { useTableInvalidation } from './useTableInvalidation';
+import { tableInvalidationEmitter } from './tableInvalidationEmitter';
 
 export function useRecipes() {
   const db = useDatabase();
@@ -56,6 +57,7 @@ export function useRecipes() {
           return result;
         }
         await loadRecipes();
+        tableInvalidationEmitter.emit('recipes');
         return result;
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'Error al crear receta';
@@ -85,6 +87,8 @@ export function useRecipes() {
           return result;
         }
         await loadRecipes();
+        tableInvalidationEmitter.emit('recipes');
+        tableInvalidationEmitter.emit('recipe_ingredients');
         return result;
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'Error al actualizar receta';
@@ -112,6 +116,10 @@ export function useRecipes() {
           return result;
         }
         await loadRecipes();
+        // Deleting a recipe cascades into plan assignments; refresh those too.
+        tableInvalidationEmitter.emit('recipes');
+        tableInvalidationEmitter.emit('recipe_ingredients');
+        tableInvalidationEmitter.emit('plan_assignments');
         return result;
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'Error al eliminar receta';

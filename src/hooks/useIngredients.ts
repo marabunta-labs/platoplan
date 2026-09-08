@@ -9,6 +9,7 @@ import type { CreateIngredientInput, UpdateIngredientInput } from '../models/inp
 import { useDatabase } from '../context/DatabaseContext';
 import { IngredientService } from '../services/ingredient.service';
 import { useTableInvalidation } from './useTableInvalidation';
+import { tableInvalidationEmitter } from './tableInvalidationEmitter';
 
 export function useIngredients() {
   const db = useDatabase();
@@ -45,6 +46,7 @@ export function useIngredients() {
       try {
         const result = await service.create(input);
         await loadIngredients();
+        tableInvalidationEmitter.emit('ingredients');
         return result;
       } catch (e: unknown) {
         const err = e as { type?: string; fields?: { message: string }[]; message?: string };
@@ -70,6 +72,8 @@ export function useIngredients() {
       try {
         const result = await service.update(id, input);
         await loadIngredients();
+        tableInvalidationEmitter.emit('ingredients');
+        tableInvalidationEmitter.emit('recipe_ingredients');
         return result;
       } catch (e: unknown) {
         const err = e as { type?: string; fields?: { message: string }[]; message?: string };
@@ -95,6 +99,12 @@ export function useIngredients() {
       try {
         const result = await service.delete(id);
         await loadIngredients();
+        // Deleting an ingredient cascades into recipes, pantry and shopping lists.
+        tableInvalidationEmitter.emit('ingredients');
+        tableInvalidationEmitter.emit('recipe_ingredients');
+        tableInvalidationEmitter.emit('recipes');
+        tableInvalidationEmitter.emit('pantry_entries');
+        tableInvalidationEmitter.emit('shopping_list_items');
         return result;
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Error al eliminar ingrediente');

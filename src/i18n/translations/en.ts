@@ -345,6 +345,10 @@ export const en: TranslationKeys = {
     quantityPositive: 'Quantity must be a positive number',
     categoryRequired: 'Category is required',
     duplicateName: 'An ingredient with this name already exists',
+    deleteTitle: 'Delete ingredient',
+    deleteConfirm: 'Delete "{name}"?',
+    deleteUsedWarning: "It's used in {count} recipe(s); it will also be removed from them and from shopping lists.",
+    deleteError: 'Could not delete the ingredient.',
   },
   terms: {
     title: 'Terms & Conditions',

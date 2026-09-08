@@ -69,7 +69,8 @@ describe('IngredientRepository', () => {
       expect(params[2]).toBe('gramos'); // unit
       expect(params[3]).toBe('bolsa de 500g'); // purchase_format_desc
       expect(params[4]).toBe(500); // purchase_format_quantity
-      expect(params[5]).toBe('verduras'); // category
+      // Categories are stored as a JSON array to support multiple categories.
+      expect(params[5]).toBe('["verduras"]'); // category (JSON-serialized)
 
       expect(result).toMatchObject({
         id: 'test-id-123',
@@ -77,6 +78,7 @@ describe('IngredientRepository', () => {
         unit: 'gramos',
         purchaseFormat: { description: 'bolsa de 500g', quantity: 500 },
         category: 'verduras',
+        categories: ['verduras'],
       });
       expect(result.createdAt).toBeInstanceOf(Date);
       expect(result.updatedAt).toBeInstanceOf(Date);

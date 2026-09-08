@@ -8,6 +8,8 @@
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-native';
+import { useTheme } from '../context/ThemeContext';
+import type { ThemeColors } from '../constants/theme';
 
 export interface CalendarPickerProps {
   startDate: Date | null;
@@ -86,9 +88,10 @@ interface MonthViewProps {
   start: Date | null;
   end: Date | null;
   onDayPress: (date: Date) => void;
+  styles: ReturnType<typeof makeStyles>;
 }
 
-function MonthView({ month, today, start, end, onDayPress }: MonthViewProps) {
+function MonthView({ month, today, start, end, onDayPress, styles }: MonthViewProps) {
   const cells = useMemo(() => buildMonthCells(month), [month]);
 
   return (
@@ -160,6 +163,8 @@ export const CalendarPicker: React.FC<CalendarPickerProps> = ({
   onEndDateSelect,
   maxRangeDays = 30,
 }) => {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const { width } = useWindowDimensions();
   const showTwoMonths = width >= TWO_MONTH_BREAKPOINT;
 
@@ -271,6 +276,7 @@ export const CalendarPicker: React.FC<CalendarPickerProps> = ({
           start={normalizedStart}
           end={normalizedEnd}
           onDayPress={handleDayPress}
+          styles={styles}
         />
         {showTwoMonths && (
           <MonthView
@@ -279,6 +285,7 @@ export const CalendarPicker: React.FC<CalendarPickerProps> = ({
             start={normalizedStart}
             end={normalizedEnd}
             onDayPress={handleDayPress}
+            styles={styles}
           />
         )}
       </View>
@@ -286,12 +293,12 @@ export const CalendarPicker: React.FC<CalendarPickerProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
-    backgroundColor: '#fff',
+    backgroundColor: colors.card,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: colors.border,
     padding: 12,
     width: '100%',
     maxWidth: 700,
@@ -303,31 +310,31 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingBottom: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: colors.border,
   },
   summaryBlock: {
     minWidth: 90,
   },
   summaryLabel: {
     fontSize: 11,
-    color: '#888',
+    color: colors.textFaint,
     textTransform: 'uppercase',
   },
   summaryValue: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#1a1a1a',
+    color: colors.text,
   },
   summaryValueActive: {
-    color: '#007AFF',
+    color: colors.accent,
   },
   summaryArrow: {
     fontSize: 16,
-    color: '#bbb',
+    color: colors.textFaint,
   },
   summaryBadge: {
     marginLeft: 'auto',
-    backgroundColor: '#e3f2fd',
+    backgroundColor: colors.accentSoft,
     borderRadius: 12,
     paddingHorizontal: 10,
     paddingVertical: 4,
@@ -335,16 +342,16 @@ const styles = StyleSheet.create({
   summaryBadgeText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#1565C0',
+    color: colors.accentText,
   },
   rangeError: {
     fontSize: 12,
-    color: '#c00',
+    color: colors.danger,
     marginTop: 6,
   },
   hint: {
     fontSize: 12,
-    color: '#888',
+    color: colors.textFaint,
     marginTop: 8,
   },
   navRow: {
@@ -358,12 +365,12 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#f0f0f0',
+    backgroundColor: colors.border,
   },
   navButtonText: {
     fontSize: 20,
     fontWeight: '600',
-    color: '#007AFF',
+    color: colors.accent,
     lineHeight: 22,
   },
   monthsRow: {
@@ -377,7 +384,7 @@ const styles = StyleSheet.create({
   monthTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#1a1a1a',
+    color: colors.text,
     textAlign: 'center',
     marginBottom: 6,
   },
@@ -392,7 +399,7 @@ const styles = StyleSheet.create({
   weekLabel: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#aaa',
+    color: colors.textFaint,
   },
   grid: {
     flexDirection: 'row',
@@ -412,25 +419,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   dayPillInRange: {
-    backgroundColor: '#e3f2fd',
+    backgroundColor: colors.accentSoft,
   },
   dayPillSelected: {
-    backgroundColor: '#007AFF',
+    backgroundColor: colors.accent,
   },
   dayText: {
     fontSize: 13,
     fontWeight: '500',
-    color: '#1a1a1a',
+    color: colors.text,
   },
   dayTextToday: {
-    color: '#007AFF',
+    color: colors.accent,
     fontWeight: '700',
   },
   dayTextSelected: {
-    color: '#fff',
+    color: colors.textInverse,
     fontWeight: '700',
   },
   dayTextPast: {
-    color: '#ccc',
+    color: colors.textFaint,
   },
 });

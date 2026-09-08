@@ -13,11 +13,13 @@
  * Requirements: 6.6
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import type { SyncStatus } from '../models/sync-types';
 import { useSync } from '../context/SyncContext';
 import { useI18n } from '../i18n';
+import { useTheme } from '../context/ThemeContext';
+import type { ThemeColors } from '../constants/theme';
 
 export interface SyncStatusIndicatorProps {
   /** Optional: show a text label alongside the icon */
@@ -30,14 +32,16 @@ export interface SyncStatusIndicatorProps {
  */
 export function SyncStatusIndicator({ showLabel = false }: SyncStatusIndicatorProps) {
   const { t } = useI18n();
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const syncManager = useSync();
   const [status, setStatus] = useState<SyncStatus>(syncManager.syncStatus);
 
   const statusConfig: Record<SyncStatus, { icon: string; color: string; label: string }> = {
-    syncing: { icon: '', color: '#007AFF', label: t('sync.syncing') },
-    synced: { icon: '✓', color: '#34C759', label: t('sync.synced') },
-    offline: { icon: '☁', color: '#8E8E93', label: t('sync.offline') },
-    error: { icon: '⚠', color: '#FF9500', label: t('sync.error') },
+    syncing: { icon: '', color: colors.accent, label: t('sync.syncing') },
+    synced: { icon: '✓', color: colors.success, label: t('sync.synced') },
+    offline: { icon: '☁', color: colors.textFaint, label: t('sync.offline') },
+    error: { icon: '⚠', color: colors.warning, label: t('sync.error') },
   };
 
   useEffect(() => {
@@ -65,7 +69,7 @@ export function SyncStatusIndicator({ showLabel = false }: SyncStatusIndicatorPr
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',

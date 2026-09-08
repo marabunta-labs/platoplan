@@ -10,7 +10,7 @@
  */
 
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -28,6 +28,8 @@ import { useDatabase } from '../context/DatabaseContext';
 import { IngredientService } from '../services/ingredient.service';
 import { useI18n } from '../i18n';
 import { DEFAULT_INGREDIENT_CATEGORIES } from '../constants/ingredient-categories';
+import { useTheme } from '../context/ThemeContext';
+import type { ThemeColors } from '../constants/theme';
 
 export interface IngredientFormModalProps {
   visible: boolean;
@@ -56,6 +58,8 @@ export function IngredientFormModal({
 }: IngredientFormModalProps) {
   const { t } = useI18n();
   const db = useDatabase();
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const modalRef = useRef<View>(null);
 
   const unitOptions: { label: string; value: MeasureUnit }[] = [
@@ -282,7 +286,7 @@ export function IngredientFormModal({
               tabIndex={0}
             >
               {isSubmitting ? (
-                <ActivityIndicator size="small" color="#007AFF" />
+                <ActivityIndicator size="small" color={colors.accent} />
               ) : (
                 <Text style={styles.saveText}>{t('common.save')}</Text>
               )}
@@ -305,7 +309,7 @@ export function IngredientFormModal({
                   if (errors.name) setErrors((prev) => ({ ...prev, name: undefined }));
                 }}
                 placeholder={t('ingredientModal.namePlaceholder')}
-                placeholderTextColor="#999"
+                placeholderTextColor={colors.textFaint}
                 maxLength={100}
                 autoFocus={!initialName}
                 accessibilityLabel={t('ingredientModal.name')}
@@ -362,7 +366,7 @@ export function IngredientFormModal({
                     setErrors((prev) => ({ ...prev, purchaseFormatDescription: undefined }));
                 }}
                 placeholder={t('ingredientModal.purchaseFormatDescPlaceholder')}
-                placeholderTextColor="#999"
+                placeholderTextColor={colors.textFaint}
                 accessibilityLabel={t('ingredientModal.purchaseFormatDesc')}
                 // @ts-ignore
                 tabIndex={0}
@@ -384,7 +388,7 @@ export function IngredientFormModal({
                     setErrors((prev) => ({ ...prev, purchaseFormatQuantity: undefined }));
                 }}
                 placeholder={t('ingredientModal.purchaseFormatQtyPlaceholder')}
-                placeholderTextColor="#999"
+                placeholderTextColor={colors.textFaint}
                 inputMode="decimal"
                 accessibilityLabel={t('ingredientModal.purchaseFormatQty')}
                 // @ts-ignore
@@ -406,7 +410,7 @@ export function IngredientFormModal({
                   if (errors.category) setErrors((prev) => ({ ...prev, category: undefined }));
                 }}
                 placeholder={`${t('ingredientModal.categoryPlaceholder')} (separa varias con comas)`}
-                placeholderTextColor="#999"
+                placeholderTextColor={colors.textFaint}
                 accessibilityLabel={t('ingredientModal.category')}
                 // @ts-ignore
                 tabIndex={0}
@@ -443,16 +447,16 @@ export function IngredientFormModal({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: colors.overlay,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 16,
   },
   modalContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: colors.surface,
     borderRadius: 12,
     overflow: 'hidden',
     width: '100%',
@@ -466,21 +470,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: colors.border,
   },
   title: {
     fontSize: 17,
     fontWeight: '600',
-    color: '#1a1a1a',
+    color: colors.text,
   },
   cancelText: {
     fontSize: 15,
-    color: '#007AFF',
+    color: colors.accent,
   },
   saveText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#007AFF',
+    color: colors.accent,
   },
   body: {
     maxHeight: 480,
@@ -495,30 +499,30 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 13,
     fontWeight: '500',
-    color: '#555',
+    color: colors.textMuted,
     marginBottom: 6,
   },
   input: {
     height: 44,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: colors.inputBg,
     borderRadius: 8,
     paddingHorizontal: 12,
     fontSize: 15,
-    color: '#1a1a1a',
+    color: colors.text,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: colors.border,
   },
   inputError: {
-    borderColor: '#c00',
+    borderColor: colors.danger,
   },
   errorText: {
     fontSize: 12,
-    color: '#c00',
+    color: colors.danger,
     marginTop: 4,
   },
   suggestions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
-  suggestion: { backgroundColor: '#eef5ff', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5 },
-  suggestionText: { color: '#007AFF', fontSize: 12 },
+  suggestion: { backgroundColor: colors.accentSoft, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5 },
+  suggestionText: { color: colors.accent, fontSize: 12 },
   unitPicker: {
     flexDirection: 'row',
     gap: 8,
@@ -527,21 +531,21 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 10,
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: colors.card,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: colors.border,
   },
   unitOptionSelected: {
-    backgroundColor: '#007AFF',
-    borderColor: '#007AFF',
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
   },
   unitOptionText: {
     fontSize: 13,
     fontWeight: '500',
-    color: '#555',
+    color: colors.textMuted,
   },
   unitOptionTextSelected: {
-    color: '#fff',
+    color: colors.textInverse,
   },
 });

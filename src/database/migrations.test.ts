@@ -8,6 +8,13 @@ describe('migrations', () => {
     mockDb = {
       execAsync: vi.fn().mockResolvedValue(undefined),
       getFirstAsync: vi.fn().mockResolvedValue({ user_version: 0 }),
+      // Column-existence checks (PRAGMA table_info) used by v2/v4/v5/v6.
+      // Returning [] means columns are treated as missing, so ALTERs run.
+      // v7 calls PRAGMA foreign_key_list(plan_assignments) — return [] so the
+      // CASCADE is treated as not yet present and the rebuild runs.
+      getAllAsync: vi.fn().mockResolvedValue([]),
+      // v7 rebuilds tables inside a transaction.
+      withTransactionAsync: vi.fn(async (cb: () => Promise<void>) => { await cb(); }),
     };
   });
 
@@ -52,11 +59,11 @@ describe('migrations', () => {
       await runMigrations(mockDb);
 
       const execCalls = mockDb.execAsync.mock.calls.map((c: any[]) => c[0]);
-      expect(execCalls).toContain('PRAGMA user_version = 4;');
+      expect(execCalls).toContain('PRAGMA user_version = 7;');
     });
 
     it('should skip migrations when already at current version', async () => {
-      mockDb.getFirstAsync.mockResolvedValue({ user_version: 4 });
+      mockDb.getFirstAsync.mockResolvedValue({ user_version: 7 });
 
       await runMigrations(mockDb);
 
@@ -72,7 +79,7 @@ describe('migrations', () => {
 
       // Reset and simulate already migrated
       mockDb.execAsync.mockClear();
-      mockDb.getFirstAsync.mockResolvedValue({ user_version: 4 });
+      mockDb.getFirstAsync.mockResolvedValue({ user_version: 7 });
       await runMigrations(mockDb);
 
       // Second run should not execute any SQL
@@ -84,27 +91,30 @@ describe('migrations', () => {
 
       await runMigrations(mockDb);
 
+      // v3 runs each statement as a separate execAsync call, so we look across
+      // all of them rather than expecting everything in a single SQL string.
       const execCalls = mockDb.execAsync.mock.calls.map((c: any[]) => c[0]);
-      const syncSql = execCalls.find((sql: string) =>
+      const allSql = execCalls.join('\n');
+
+      const syncQueueSql = execCalls.find((sql: string) =>
         sql.includes('CREATE TABLE IF NOT EXISTS _sync_queue')
       );
-      expect(syncSql).toBeDefined();
+      expect(syncQueueSql).toBeDefined();
 
       // Verify sync queue table schema
-      expect(syncSql).toContain('CREATE TABLE IF NOT EXISTS _sync_queue');
-      expect(syncSql).toContain("operation TEXT NOT NULL CHECK(operation IN ('create', 'update', 'delete'))");
-      expect(syncSql).toContain("status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'failed'))");
-      expect(syncSql).toContain('retry_count INTEGER NOT NULL DEFAULT 0');
+      expect(syncQueueSql).toContain("operation TEXT NOT NULL CHECK(operation IN ('create', 'update', 'delete'))");
+      expect(syncQueueSql).toContain("status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'failed'))");
+      expect(syncQueueSql).toContain('retry_count INTEGER NOT NULL DEFAULT 0');
 
       // Verify sync meta table
-      expect(syncSql).toContain('CREATE TABLE IF NOT EXISTS _sync_meta');
-      expect(syncSql).toContain('last_synced_at TEXT');
+      expect(allSql).toContain('CREATE TABLE IF NOT EXISTS _sync_meta');
+      expect(allSql).toContain('last_synced_at TEXT');
 
       // Verify index
-      expect(syncSql).toContain('CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON _sync_queue(status, created_at)');
+      expect(allSql).toContain('CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON _sync_queue(status, created_at)');
     });
 
-    it('should only apply v3 and v4 when upgrading from v2', async () => {
+    it('should apply v3 onward (not v1/v2) when upgrading from v2', async () => {
       mockDb.getFirstAsync.mockResolvedValue({ user_version: 2 });
 
       await runMigrations(mockDb);
@@ -134,8 +144,50 @@ describe('migrations', () => {
       );
       expect(hasV4).toBe(true);
 
-      // Should set version to 4
-      expect(execCalls).toContain('PRAGMA user_version = 4;');
+      // Should set version to the current schema version
+      expect(execCalls).toContain('PRAGMA user_version = 7;');
+    });
+
+    it('should apply v7 rebuild adding ON DELETE CASCADE to plan_assignments and shopping_list_items', async () => {
+      mockDb.getFirstAsync.mockResolvedValue({ user_version: 6 });
+      // foreign_key_list returns no CASCADE yet → rebuild should run.
+      mockDb.getAllAsync.mockResolvedValue([{ table: 'recipes', on_delete: 'NO ACTION' }]);
+
+      await runMigrations(mockDb);
+
+      const execCalls = mockDb.execAsync.mock.calls.map((c: any[]) => c[0]);
+      const allSql = execCalls.join('\n');
+
+      // Rebuilt tables include the CASCADE foreign keys.
+      expect(allSql).toContain('CREATE TABLE plan_assignments_new');
+      expect(allSql).toContain('recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE');
+      expect(allSql).toContain('CREATE TABLE shopping_list_items_new');
+      expect(allSql).toContain('ingredient_id TEXT NOT NULL REFERENCES ingredients(id) ON DELETE CASCADE');
+      // Old tables dropped and new ones renamed into place.
+      expect(allSql).toContain('DROP TABLE plan_assignments;');
+      expect(allSql).toContain('ALTER TABLE plan_assignments_new RENAME TO plan_assignments;');
+      expect(allSql).toContain('DROP TABLE shopping_list_items;');
+      expect(allSql).toContain('ALTER TABLE shopping_list_items_new RENAME TO shopping_list_items;');
+      // Runs inside a transaction with FK enforcement toggled around it.
+      expect(mockDb.withTransactionAsync).toHaveBeenCalled();
+      expect(execCalls).toContain('PRAGMA foreign_keys = OFF;');
+      expect(execCalls).toContain('PRAGMA foreign_keys = ON;');
+      expect(execCalls).toContain('PRAGMA user_version = 7;');
+    });
+
+    it('should skip the v7 rebuild when CASCADE is already present', async () => {
+      mockDb.getFirstAsync.mockResolvedValue({ user_version: 6 });
+      // foreign_key_list already reports CASCADE → rebuild is skipped.
+      mockDb.getAllAsync.mockResolvedValue([{ table: 'recipes', on_delete: 'CASCADE' }]);
+
+      await runMigrations(mockDb);
+
+      const execCalls = mockDb.execAsync.mock.calls.map((c: any[]) => c[0]);
+      const allSql = execCalls.join('\n');
+      expect(allSql).not.toContain('CREATE TABLE plan_assignments_new');
+      expect(mockDb.withTransactionAsync).not.toHaveBeenCalled();
+      // Version is still advanced to 7.
+      expect(execCalls).toContain('PRAGMA user_version = 7;');
     });
 
     it('should handle null user_version (fresh database)', async () => {

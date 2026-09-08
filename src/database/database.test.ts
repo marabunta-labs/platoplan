@@ -10,12 +10,18 @@ import {
 // Mock expo-sqlite
 const mockExecAsync = vi.fn().mockResolvedValue(undefined);
 const mockGetFirstAsync = vi.fn().mockResolvedValue({ user_version: 0 });
+const mockGetAllAsync = vi.fn().mockResolvedValue([]);
 const mockCloseAsync = vi.fn().mockResolvedValue(undefined);
+
+// Migration v7 rebuilds tables inside a transaction.
+const mockWithTransactionAsync = vi.fn(async (cb: () => Promise<void>) => { await cb(); });
 
 const mockDb = {
   execAsync: mockExecAsync,
   getFirstAsync: mockGetFirstAsync,
+  getAllAsync: mockGetAllAsync,
   closeAsync: mockCloseAsync,
+  withTransactionAsync: mockWithTransactionAsync,
 };
 
 vi.mock('expo-sqlite', () => ({
@@ -107,22 +113,28 @@ describe('database', () => {
   });
 
   describe('withTransaction', () => {
+    // These tests exercise the manual BEGIN/COMMIT fallback, so they use a mock
+    // WITHOUT withTransactionAsync (mockDb has it, which would take the native path).
+    const makeFallbackDb = () => ({ execAsync: mockExecAsync });
+
     it('should execute callback within BEGIN/COMMIT', async () => {
+      const fallbackDb = makeFallbackDb();
       const callback = vi.fn().mockResolvedValue('result');
 
-      const result = await withTransaction(mockDb as any, callback);
+      const result = await withTransaction(fallbackDb as any, callback);
 
       expect(result).toBe('result');
       expect(mockExecAsync).toHaveBeenCalledWith('BEGIN TRANSACTION;');
-      expect(callback).toHaveBeenCalledWith(mockDb);
+      expect(callback).toHaveBeenCalledWith(fallbackDb);
       expect(mockExecAsync).toHaveBeenCalledWith('COMMIT;');
     });
 
     it('should rollback on error', async () => {
+      const fallbackDb = makeFallbackDb();
       const error = new Error('something failed');
       const callback = vi.fn().mockRejectedValue(error);
 
-      await expect(withTransaction(mockDb as any, callback)).rejects.toThrow(
+      await expect(withTransaction(fallbackDb as any, callback)).rejects.toThrow(
         'something failed'
       );
 
@@ -132,11 +144,12 @@ describe('database', () => {
     });
 
     it('should pass the database instance to the callback', async () => {
+      const fallbackDb = makeFallbackDb();
       const callback = vi.fn().mockResolvedValue(undefined);
 
-      await withTransaction(mockDb as any, callback);
+      await withTransaction(fallbackDb as any, callback);
 
-      expect(callback).toHaveBeenCalledWith(mockDb);
+      expect(callback).toHaveBeenCalledWith(fallbackDb);
     });
   });
 

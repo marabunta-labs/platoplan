@@ -479,19 +479,19 @@ describe('ShoppingListService - Property Tests', () => {
             // Compute expected
             const expectedNet = Math.max(0, ingredientQty - pantryQty);
 
+            // The ingredient is always present (fully-covered items stay with
+            // net 0 so they can be shown as "already at home"), with the net
+            // quantity clamped at 0.
+            expect(capturedItems).toHaveLength(1);
+            const item = capturedItems[0];
+            expect(item.ingredientId).toBe(ingredientId);
+            expect(item.netQuantity).toBeCloseTo(expectedNet, 5);
+            expect(item.pantryQuantityDeducted).toBeCloseTo(
+              Math.min(pantryQty, ingredientQty),
+              5
+            );
             if (expectedNet === 0) {
-              // Ingredient should be excluded entirely
-              const found = capturedItems.find((item) => item.ingredientId === ingredientId);
-              expect(found).toBeUndefined();
-            } else {
-              // Ingredient should be present with correct net quantity
-              expect(capturedItems).toHaveLength(1);
-              const item = capturedItems[0];
-              expect(item.netQuantity).toBeCloseTo(expectedNet, 5);
-              expect(item.pantryQuantityDeducted).toBeCloseTo(
-                Math.min(pantryQty, ingredientQty),
-                5
-              );
+              expect(item.purchaseUnits).toBe(0);
             }
           }
         ),

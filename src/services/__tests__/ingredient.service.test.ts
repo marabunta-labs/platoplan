@@ -161,22 +161,14 @@ describe('IngredientService', () => {
       }
     });
 
-    it('should reject empty purchaseFormat description', async () => {
+    it('should accept an empty purchaseFormat description (description is optional)', async () => {
       const input = {
         ...validInput(),
         purchaseFormat: { description: '', quantity: 500 },
       };
 
-      try {
-        await service.create(input);
-        expect.fail('Should have thrown');
-      } catch (e) {
-        const err = e as ValidationError;
-        expect(err.type).toBe('validation');
-        expect(err.fields).toContainEqual(
-          expect.objectContaining({ field: 'purchaseFormat.description' })
-        );
-      }
+      // Description is optional; only the quantity is validated.
+      await expect(service.create(input)).resolves.toBeDefined();
     });
 
     it('should reject purchaseFormat quantity of 0', async () => {
@@ -316,7 +308,11 @@ describe('IngredientService', () => {
       } catch (e) {
         const err = e as ValidationError;
         expect(err.type).toBe('validation');
-        expect(err.fields.length).toBe(2);
+        // Description is optional now; only the invalid quantity is reported.
+        expect(err.fields.length).toBe(1);
+        expect(err.fields).toContainEqual(
+          expect.objectContaining({ field: 'purchaseFormat.quantity' })
+        );
       }
     });
 

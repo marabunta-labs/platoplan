@@ -22,14 +22,20 @@ import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { StatusBar } from '@/components/StatusBarCompat';
 import { GuestBanner } from '@/components/GuestBanner';
-import { AuthProvider, DatabaseProvider, SyncProvider } from '@/context';
+import { AuthProvider, DatabaseProvider, SyncProvider, ThemeProvider } from '@/context';
 import { useAuth } from '@/context';
 import { ResponsiveNavigator } from '@/navigation';
 import { useRealtimeSync } from '@/hooks';
 import { useDatabase } from '@/context';
 import { supabase } from '@/config/supabase';
 import { I18nProvider } from '@/i18n';
+import { AlertHost } from '@/components';
 import { View } from 'react-native'
+import { applyGlobalFont } from '@/constants/typography';
+
+// Apply the app-wide font family once, before anything renders, so every
+// Text/TextInput uses the same typeface across all screens.
+applyGlobalFont();
 
 /**
  * RealtimeSyncBridge
@@ -92,11 +98,15 @@ function AuthenticatedApp() {
 export default function App() {
   return (
     <I18nProvider>
-      <AuthProvider>
-        <DatabaseProvider>
-          <AuthenticatedApp />
-        </DatabaseProvider>
-      </AuthProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <DatabaseProvider>
+            <AuthenticatedApp />
+          </DatabaseProvider>
+        </AuthProvider>
+        {/* App-wide floating alert host (web renders in-app dialogs; native is a no-op) */}
+        <AlertHost />
+      </ThemeProvider>
     </I18nProvider>
   );
 }

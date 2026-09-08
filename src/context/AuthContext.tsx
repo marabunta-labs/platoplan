@@ -20,6 +20,7 @@ import { authService } from '../services/auth.service';
 import type { AuthEvent } from '../services/auth.service';
 import { LoginScreen } from '../screens/auth/LoginScreen';
 import { RegisterScreen } from '../screens/auth/RegisterScreen';
+import { useTheme } from './ThemeContext';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -79,6 +80,7 @@ interface AuthProviderProps {
  * - When session exists OR guest mode → renders children (main app)
  */
 export function AuthProvider({ children }: AuthProviderProps) {
+  const { colors } = useTheme();
   const [session, setSession] = useState<Session | null>(null);
   const [isGuest, setIsGuest] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -157,8 +159,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // Show loading spinner while checking initial session
   if (isLoading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#007AFF" />
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.accent} />
       </View>
     );
   }
@@ -223,6 +225,5 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#fff',
   },
 });

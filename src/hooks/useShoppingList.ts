@@ -140,6 +140,26 @@ export function useShoppingList() {
     [db]
   );
 
+  // Confirms the user's real pantry stock for an ingredient (writes to pantry)
+  // and recalculates the list so the deduction is persistent.
+  const confirmPantryQuantity = useCallback(
+    async (listId: string, ingredientId: string, availableQuantity: number) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const updated = await service.confirmPantryQuantity(listId, ingredientId, availableQuantity);
+        setShoppingList(updated);
+        return updated;
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Error al confirmar la despensa');
+        throw e;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [db]
+  );
+
   return {
     shoppingList,
     loading,
@@ -149,6 +169,7 @@ export function useShoppingList() {
     editQuantity,
     removeItem,
     regenerate,
+    confirmPantryQuantity,
     loadByPlanId,
   };
 }

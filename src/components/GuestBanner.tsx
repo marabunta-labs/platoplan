@@ -5,14 +5,18 @@
  * prompting them to register for cloud sync.
  */
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { useI18n } from '../i18n';
+import { useTheme } from '../context/ThemeContext';
+import type { ThemeColors } from '../constants/theme';
 
 export function GuestBanner() {
   const { isGuest, exitGuestMode } = useAuth();
   const { t } = useI18n();
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
 
   if (!isGuest) return null;
 
@@ -31,9 +35,9 @@ export function GuestBanner() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
-    backgroundColor: '#FFF3CD',
+    backgroundColor: colors.warningBg,
     padding: 12,
     flexDirection: 'row',
     justifyContent: 'center',
@@ -42,17 +46,17 @@ const styles = StyleSheet.create({
   text: {
     flex: 1,
     fontSize: 12,
-    color: '#92400E',
+    color: colors.warningText,
   },
   button: {
     paddingHorizontal: 10,
     paddingVertical: 4,
-    backgroundColor: '#007AFF',
+    backgroundColor: colors.accent,
     borderRadius: 4,
   },
   buttonText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.textInverse,
   },
 });

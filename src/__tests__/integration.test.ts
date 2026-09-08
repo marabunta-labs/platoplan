@@ -467,11 +467,15 @@ describe('Integration Tests - End-to-End Workflows', () => {
       expect(pastaItem!.netQuantity).toBe(750);
       expect(pastaItem!.purchaseUnits).toBe(2);
 
-      // Aceite: 30ml * 3 = 90ml total, pantry has 500ml → fully covered, excluded
+      // Aceite: 30ml * 3 = 90ml total, pantry has 500ml → fully covered.
+      // Fully-covered items stay in the list with net 0 / 0 purchase units so
+      // they can be shown under "already at home".
       const aceiteItem = shoppingList.items.find(
         (item) => item.ingredientId === aceite.id
       );
-      expect(aceiteItem).toBeUndefined();
+      expect(aceiteItem).toBeDefined();
+      expect(aceiteItem!.netQuantity).toBe(0);
+      expect(aceiteItem!.purchaseUnits).toBe(0);
     });
 
     it('should handle multiple recipes sharing ingredients', async () => {
@@ -716,11 +720,14 @@ describe('Integration Tests - End-to-End Workflows', () => {
     });
 
     it('should reject recipe creation with invalid ingredient quantity', async () => {
+      const result = await recipeService.create({
         name: 'Receta con cantidad inválida',
         mealType: 'comida',
+        prepTime: 'rapido',
         ingredients: [{ ingredientId: 'ing-1', quantity: 0 }],
       });
 
+      expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.type).toBe('validation');
         const validationError = result.error as ValidationError;

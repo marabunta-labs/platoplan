@@ -21,6 +21,7 @@ export interface IShoppingListService {
   removeItem(listId: string, itemId: string): Promise<ShoppingList>;
   getByPlanId(planId: string): Promise<ShoppingList | null>;
   regenerate(listId: string): Promise<ShoppingList>;
+  confirmPantryQuantity(listId: string, ingredientId: string, availableQuantity: number): Promise<ShoppingList>;
   markPlanModified(planId: string): Promise<void>;
 }
 
@@ -124,6 +125,32 @@ export class ShoppingListService implements IShoppingListService {
       throw new Error(`Shopping list not found: ${listId}`);
     }
     return list;
+  }
+
+  /**
+   * Confirms how much of an ingredient the user actually has, writing it to the
+   * pantry (the single source of truth), then recalculates the shopping list so
+   * the pantry deduction is persistent and consistent.
+   *
+   * - availableQuantity > 0 -> upsert the pantry entry to that amount.
+   * - availableQuantity <= 0 -> remove the pantry entry (i.e. "I have none").
+   *
+   * Because the deduction lives in the pantry, it survives future regenerations.
+   */
+  async confirmPantryQuantity(
+    listId: string,
+    ingredientId: string,
+    availableQuantity: number
+  ): Promise<ShoppingList> {
+    const amount = Number.isFinite(availableQuantity) ? Math.max(0, availableQuantity) : 0;
+
+    if (amount > 0) {
+      await this.pantryRepo.addOrUpdate(ingredientId, amount);
+    } else {
+      await this.pantryRepo.remove(ingredientId);
+    }
+
+    return this.regenerate(listId);
   }
 
   async getByPlanId(planId: string): Promise<ShoppingList | null> {

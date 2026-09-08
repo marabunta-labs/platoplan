@@ -48,11 +48,12 @@ const arbRecipeName = fc
   .string({ minLength: 1, maxLength: 100 })
   .filter((s) => s.trim().length >= 1 && s.trim().length <= 100);
 
-/** Invalid recipe name: empty string or >100 chars after trim */
+/** Invalid recipe name: empty/whitespace, or >100 non-space chars after trim */
 const arbInvalidRecipeName = fc.oneof(
   fc.constant(''),
   fc.constant('   '),
-  fc.string({ minLength: 101, maxLength: 200 }).map((s) => s.padEnd(101, 'x'))
+  // Guarantee the trimmed length exceeds 100 by using only non-space chars.
+  fc.integer({ min: 101, max: 200 }).map((n) => 'x'.repeat(n))
 );
 
 /** Valid meal type */

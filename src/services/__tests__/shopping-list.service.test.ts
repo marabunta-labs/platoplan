@@ -309,7 +309,7 @@ describe('ShoppingListService', () => {
       ]);
     });
 
-    it('should exclude ingredient when fully covered by pantry', async () => {
+    it('should keep fully-covered ingredient with net 0 (shown as "already at home")', async () => {
       const plan = makePlan('plan-1', ['recipe-1']);
       vi.mocked(planRepository.getPlanById).mockResolvedValue(plan);
 
@@ -347,9 +347,10 @@ describe('ShoppingListService', () => {
         purchaseFormat: { description: 'malla 2kg', quantity: 2000 },
         category: 'verduras',
       });
-      mockIngredientRepo.getById
-        .mockResolvedValueOnce(potato) // for calculateShoppingItems
-        .mockResolvedValueOnce(potato); // for sortItemsByCategoryAndName
+      // Ingredients are looked up in calculateShoppingItems and again in sorting.
+      mockIngredientRepo.getById.mockImplementation(async (id: string) =>
+        id === 'ing-eggs' ? eggs : id === 'ing-potato' ? potato : null
+      );
 
       mockShoppingListRepo.create.mockResolvedValue({
         id: 'list-1',
@@ -361,10 +362,22 @@ describe('ShoppingListService', () => {
 
       await service.generate('plan-1');
 
-      // Only potato should appear (eggs fully covered by pantry)
+      // Both ingredients appear. The fully-covered one (eggs) stays with
+      // netQuantity 0 / purchaseUnits 0 so it can be shown as "Todo listo",
+      // while the partially-covered one (potato) still needs buying.
       const createCall = mockShoppingListRepo.create.mock.calls[0];
-      expect(createCall[1]).toHaveLength(1);
-      expect(createCall[1][0].ingredientId).toBe('ing-potato');
+      expect(createCall[1]).toHaveLength(2);
+
+      const eggsItem = createCall[1].find((i: any) => i.ingredientId === 'ing-eggs');
+      const potatoItem = createCall[1].find((i: any) => i.ingredientId === 'ing-potato');
+
+      expect(eggsItem).toBeDefined();
+      expect(eggsItem.netQuantity).toBe(0);
+      expect(eggsItem.purchaseUnits).toBe(0);
+
+      expect(potatoItem).toBeDefined();
+      expect(potatoItem.netQuantity).toBe(300); // 500 needed - 200 pantry
+      expect(potatoItem.purchaseUnits).toBe(1); // ceil(300 / 2000)
     });
 
     it('should calculate purchaseUnits = ceil(netQuantity / purchaseFormat.quantity)', async () => {
@@ -645,14 +658,29 @@ describe('ShoppingListService', () => {
       );
     });
 
-    it('should throw ValidationError when quantity is less than 1', async () => {
+    it('should accept quantity of 0 (marking an item as fully covered / not needed)', async () => {
+      mockShoppingListRepo.editQuantity.mockResolvedValue(undefined);
+      mockDb.getFirstAsync.mockResolvedValue({ plan_id: 'plan-1' });
+      mockShoppingListRepo.getByPlanId.mockResolvedValue({
+        id: 'list-1',
+        planId: 'plan-1',
+        items: [],
+        generatedAt: new Date(),
+        isStale: false,
+      });
+
+      await service.editQuantity('list-1', 'item-1', 0);
+      expect(mockShoppingListRepo.editQuantity).toHaveBeenCalledWith('item-1', 0);
+    });
+
+    it('should throw ValidationError when quantity is negative', async () => {
       try {
-        await service.editQuantity('list-1', 'item-1', 0);
+        await service.editQuantity('list-1', 'item-1', -1);
         expect.fail('Should have thrown');
       } catch (error: any) {
         expect(error.type).toBe('validation');
         expect(error.fields).toEqual([
-          { field: 'quantity', message: 'Quantity must be an integer between 1 and 999' },
+          { field: 'quantity', message: 'Quantity must be an integer between 0 and 999' },
         ]);
       }
       // Should not call repo
@@ -666,7 +694,7 @@ describe('ShoppingListService', () => {
       } catch (error: any) {
         expect(error.type).toBe('validation');
         expect(error.fields).toEqual([
-          { field: 'quantity', message: 'Quantity must be an integer between 1 and 999' },
+          { field: 'quantity', message: 'Quantity must be an integer between 0 and 999' },
         ]);
       }
       expect(mockShoppingListRepo.editQuantity).not.toHaveBeenCalled();
@@ -679,7 +707,7 @@ describe('ShoppingListService', () => {
       } catch (error: any) {
         expect(error.type).toBe('validation');
         expect(error.fields).toEqual([
-          { field: 'quantity', message: 'Quantity must be an integer between 1 and 999' },
+          { field: 'quantity', message: 'Quantity must be an integer between 0 and 999' },
         ]);
       }
       expect(mockShoppingListRepo.editQuantity).not.toHaveBeenCalled();
@@ -846,20 +874,48 @@ describe('ShoppingListService', () => {
       );
     });
 
-    it('should throw error when associated plan is not found', async () => {
-      mockDb.getFirstAsync.mockResolvedValue({ plan_id: 'plan-deleted' });
+    it('should rebuild from existing items when the plan is missing (custom lists / deleted plan)', async () => {
+      // Custom lists use a virtual/ghost plan that may not resolve to a real
+      // plan with assignments. In that case regenerate must reconstruct the
+      // aggregate from the list's own items instead of throwing.
+      mockDb.getFirstAsync.mockResolvedValue({ plan_id: 'custom_list_current' });
       mockShoppingListRepo.getByPlanId.mockResolvedValue({
         id: 'list-1',
-        planId: 'plan-deleted',
-        items: [],
+        planId: 'custom_list_current',
+        items: [
+          {
+            id: 'item-1',
+            listId: 'list-1',
+            ingredientId: 'ing-1',
+            totalQuantityNeeded: 300,
+            pantryQuantityDeducted: 0,
+            netQuantity: 300,
+            purchaseUnits: 1,
+            isManuallyEdited: false,
+            isRemoved: false,
+          },
+        ],
         generatedAt: new Date(),
         isStale: true,
       });
       vi.mocked(planRepository.getPlanById).mockResolvedValue(null);
+      mockPantryRepo.getByIngredientId.mockResolvedValue(null);
+      const ing1 = makeIngredient({ id: 'ing-1', name: 'Ingrediente', purchaseFormat: { description: 'paquete', quantity: 250 } });
+      mockIngredientRepo.getById.mockResolvedValue(ing1);
+      const updatedList = { id: 'list-1', planId: 'custom_list_current', items: [], generatedAt: new Date(), isStale: false };
+      mockShoppingListRepo.update.mockResolvedValue(updatedList);
 
-      await expect(service.regenerate('list-1')).rejects.toThrow(
-        'Plan not found: plan-deleted'
-      );
+      await service.regenerate('list-1');
+
+      // It rebuilds from the existing item's totalQuantityNeeded (300) instead of throwing.
+      expect(mockShoppingListRepo.update).toHaveBeenCalledWith('list-1', [
+        expect.objectContaining({
+          ingredientId: 'ing-1',
+          totalQuantityNeeded: 300,
+          netQuantity: 300,
+          purchaseUnits: 2, // ceil(300 / 250)
+        }),
+      ]);
     });
   });
 

@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { View, TextInput, StyleSheet } from 'react-native';
+import { useTheme } from '../context/ThemeContext';
+import type { ThemeColors } from '../constants/theme';
 
 export interface SearchBarProps {
   placeholder: string;
@@ -7,6 +9,8 @@ export interface SearchBarProps {
 }
 
 export const SearchBar: React.FC<SearchBarProps> = ({ placeholder, onSearch }) => {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const [text, setText] = useState('');
 
   const handleChangeText = (value: string) => {
@@ -19,7 +23,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({ placeholder, onSearch }) =
       <TextInput
         style={styles.input}
         placeholder={placeholder}
-        placeholderTextColor="#999"
+        placeholderTextColor={colors.textFaint}
         value={text}
         onChangeText={handleChangeText}
         autoCapitalize="none"
@@ -31,19 +35,19 @@ export const SearchBar: React.FC<SearchBarProps> = ({ placeholder, onSearch }) =
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
   input: {
     height: 40,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: colors.card,
     borderRadius: 8,
     paddingHorizontal: 14,
     fontSize: 15,
-    color: '#1a1a1a',
+    color: colors.text,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: colors.border,
   },
 });

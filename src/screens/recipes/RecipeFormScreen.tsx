@@ -3,7 +3,7 @@
  * Form for creating/editing recipes with validation and ingredient management
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import { AlertCompat } from '../../utils/alert';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -21,9 +22,11 @@ import type { RouteProp } from '@react-navigation/native';
 import type { RecipeStackParamList } from '../../navigation/types';
 import type { MealType, PrepTime } from '../../models/enums';
 import type { RecipeIngredient, Ingredient } from '../../models/types';
-import { IngredientRow, SearchBar, IngredientFormModal, Stepper } from '../../components';
+import { SearchBar, IngredientFormModal, Stepper } from '../../components';
 import { useRecipes, useIngredients } from '../../hooks';
 import { useI18n } from '../../i18n';
+import { useTheme } from '../../context/ThemeContext';
+import type { ThemeColors } from '../../constants/theme';
 
 type NavigationProp = NativeStackNavigationProp<RecipeStackParamList, 'RecipeForm'>;
 type FormRouteProp = RouteProp<RecipeStackParamList, 'RecipeForm'>;
@@ -33,6 +36,8 @@ export function RecipeFormScreen() {
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<FormRouteProp>();
   const isEditing = !!route.params?.recipeId;
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const mealTypeOptions: { value: MealType; label: string }[] = [
     { value: 'comida', label: t('mealTypes.comida') },
@@ -64,13 +69,15 @@ export function RecipeFormScreen() {
   // Ingredient creation modal state
   const [showIngredientForm, setShowIngredientForm] = useState(false);
 
+  // Ingredient master-data editing modal state (edit name/unit/format/category)
+  const [editingIngredient, setEditingIngredient] = useState<Ingredient | null>(null);
+
+  // Ingredient whose definition is shown in the info popover
+  const [infoIngredient, setInfoIngredient] = useState<Ingredient | null>(null);
+
   // Pending ingredient (waiting for quantity input)
   const [pendingIngredient, setPendingIngredient] = useState<Ingredient | null>(null);
   const [pendingQuantity, setPendingQuantity] = useState('');
-
-  // Editing existing ingredient quantity
-  const [editingIngredientId, setEditingIngredientId] = useState<string | null>(null);
-  const [editingQuantity, setEditingQuantity] = useState('');
 
   // Load existing recipe data for editing
   useEffect(() => {
@@ -200,35 +207,34 @@ export function RecipeFormScreen() {
     setIngredients(ingredients.filter((i) => i.ingredientId !== ingredientId));
   };
 
-  const handleEditIngredient = (ingredientId: string) => {
-    const existing = ingredients.find((i) => i.ingredientId === ingredientId);
-    if (existing) {
-      setEditingIngredientId(ingredientId);
-      setEditingQuantity(String(existing.quantity));
-    }
+  const handleIngredientUpdated = (updated: Ingredient) => {
+    // Reflect the updated master data in the recipe's ingredient rows.
+    setIngredients((prev) =>
+      prev.map((i) => (i.ingredientId === updated.id ? { ...i, ingredient: updated } : i))
+    );
+    setEditingIngredient(null);
   };
 
-  const handleConfirmEditQuantity = () => {
-    if (!editingIngredientId) return;
-
-    const qty = parseFloat(editingQuantity);
-    if (isNaN(qty) || qty <= 0) {
-      AlertCompat.alert(t('recipes.invalidQuantityTitle'), t('recipes.invalidQuantityMessage'));
-      return;
-    }
-
-    setIngredients(
-      ingredients.map((i) =>
-        i.ingredientId === editingIngredientId ? { ...i, quantity: qty } : i
+  // Inline quantity editing: updates the ingredient quantity as the user types.
+  // Accepts partial input (empty / decimal separator) and stores 0 for invalid
+  // values so the field stays editable; save-time validation guards final data.
+  const handleInlineQuantityChange = (ingredientId: string, text: string) => {
+    const normalized = text.replace(',', '.');
+    const qty = normalized.trim() === '' ? 0 : parseFloat(normalized);
+    setIngredients((prev) =>
+      prev.map((i) =>
+        i.ingredientId === ingredientId
+          ? { ...i, quantity: Number.isFinite(qty) ? qty : 0 }
+          : i
       )
     );
-    setEditingIngredientId(null);
-    setEditingQuantity('');
   };
 
-  const handleCancelEdit = () => {
-    setEditingIngredientId(null);
-    setEditingQuantity('');
+  const handleEditFromInfo = () => {
+    if (infoIngredient) {
+      setEditingIngredient(infoIngredient);
+      setInfoIngredient(null);
+    }
   };
 
   const handleSearch = async (query: string) => {
@@ -273,7 +279,7 @@ export function RecipeFormScreen() {
             value={name}
             onChangeText={setName}
             placeholder={t('recipes.namePlaceholder')}
-            placeholderTextColor="#999"
+            placeholderTextColor={colors.textFaint}
             accessibilityLabel={t('recipes.name')}
           />
           {errors.name && <Text style={styles.errorText}>{errors.name}</Text>}
@@ -358,7 +364,7 @@ export function RecipeFormScreen() {
             value={description}
             onChangeText={setDescription}
             placeholder={t('recipes.descriptionPlaceholder')}
-            placeholderTextColor="#999"
+            placeholderTextColor={colors.textFaint}
             multiline
             numberOfLines={4}
             textAlignVertical="top"
@@ -406,7 +412,7 @@ export function RecipeFormScreen() {
                   value={pendingQuantity}
                   onChangeText={setPendingQuantity}
                   placeholder={t('recipes.quantity')}
-                  placeholderTextColor="#999"
+                  placeholderTextColor={colors.textFaint}
                   keyboardType="decimal-pad"
                   autoFocus
                   accessibilityLabel={`${t('recipes.quantity')} (${t(`units.${pendingIngredient.unit}` as any) || pendingIngredient.unit})`}
@@ -450,57 +456,51 @@ export function RecipeFormScreen() {
             </View>
           )}
 
-          {/* Current ingredient list */}
+          {/* Current ingredient list — inline editable quantity + info button */}
           {ingredients.length > 0 && (
             <View style={styles.ingredientList}>
-              {ingredients.map((ingredient) => (
-                <View key={ingredient.ingredientId}>
-                  {editingIngredientId === ingredient.ingredientId ? (
-                    <View style={styles.editQuantityCard}>
-                      <Text style={styles.editQuantityName}>
-                        {ingredient.ingredient?.name ?? ingredient.ingredientId}
-                      </Text>
-                      <View style={styles.pendingInputRow}>
-                        <TextInput
-                          style={[styles.textInput, styles.quantityInput]}
-                          value={editingQuantity}
-                          onChangeText={setEditingQuantity}
-                          keyboardType="decimal-pad"
-                          autoFocus
-                          accessibilityLabel={t('recipes.newQuantityA11y', { unit: ingredient.ingredient?.unit ?? '' })}
-                        />
-                        <Text style={styles.unitLabel}>
-                          {ingredient.ingredient?.unit ? (t(`units.${ingredient.ingredient.unit}` as any) || ingredient.ingredient.unit) : ''}
-                        </Text>
-                      </View>
-                      <View style={styles.pendingActions}>
-                        <TouchableOpacity
-                          style={styles.pendingCancelButton}
-                          onPress={handleCancelEdit}
-                          accessibilityRole="button"
-                          accessibilityLabel={t('common.cancel')}
-                        >
-                          <Text style={styles.pendingCancelText}>{t('common.cancel')}</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={styles.pendingConfirmButton}
-                          onPress={handleConfirmEditQuantity}
-                          accessibilityRole="button"
-                          accessibilityLabel={t('common.save')}
-                        >
-                          <Text style={styles.pendingConfirmText}>{t('common.save')}</Text>
-                        </TouchableOpacity>
-                      </View>
+              {ingredients.map((ingredient) => {
+                const ingName = ingredient.ingredient?.name ?? ingredient.ingredientId;
+                const ingUnit = ingredient.ingredient?.unit
+                  ? (t(`units.${ingredient.ingredient.unit}` as any) || ingredient.ingredient.unit)
+                  : '';
+                return (
+                  <View key={ingredient.ingredientId} style={styles.ingredientItemRow}>
+                    <Text style={styles.ingredientItemName} numberOfLines={1}>{ingName}</Text>
+
+                    <View style={styles.ingredientQtyBox}>
+                      <TextInput
+                        style={styles.ingredientQtyInput}
+                        value={String(ingredient.quantity)}
+                        onChangeText={(text) => handleInlineQuantityChange(ingredient.ingredientId, text)}
+                        keyboardType="decimal-pad"
+                        selectTextOnFocus
+                        accessibilityLabel={t('recipes.newQuantityA11y', { unit: ingUnit })}
+                      />
+                      <Text style={styles.ingredientQtyUnit}>{ingUnit}</Text>
                     </View>
-                  ) : (
-                    <IngredientRow
-                      ingredient={ingredient}
-                      onEdit={() => handleEditIngredient(ingredient.ingredientId)}
-                      onDelete={() => handleRemoveIngredient(ingredient.ingredientId)}
-                    />
-                  )}
-                </View>
-              ))}
+
+                    {ingredient.ingredient && (
+                      <TouchableOpacity
+                        style={styles.ingredientIconButton}
+                        onPress={() => setInfoIngredient(ingredient.ingredient!)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${t('recipes.ingredientInfo')} ${ingName}`}
+                      >
+                        <Text style={styles.ingredientIconText}>ℹ️</Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity
+                      style={[styles.ingredientIconButton, styles.ingredientDeleteButton]}
+                      onPress={() => handleRemoveIngredient(ingredient.ingredientId)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${t('common.delete')} ${ingName}`}
+                    >
+                      <Text style={styles.ingredientDeleteText}>✕</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
             </View>
           )}
 
@@ -522,7 +522,7 @@ export function RecipeFormScreen() {
           accessibilityLabel={isEditing ? t('recipes.saveChanges') : t('recipes.createRecipeAction')}
         >
           {saving ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <ActivityIndicator size="small" color={colors.textInverse} />
           ) : (
             <Text style={styles.saveButtonText}>
               {isEditing ? t('recipes.saveChanges') : t('recipes.createRecipeAction')}
@@ -542,14 +542,55 @@ export function RecipeFormScreen() {
         }}
         initialName={searchQuery}
       />
+
+      {/* Ingredient master-data edit modal */}
+      <IngredientFormModal
+        visible={!!editingIngredient}
+        ingredient={editingIngredient ?? undefined}
+        onClose={() => setEditingIngredient(null)}
+        onCreated={handleIngredientUpdated}
+      />
+
+      {/* Ingredient info popover: shows how the ingredient is defined + edit */}
+      <Modal visible={!!infoIngredient} transparent animationType="fade" onRequestClose={() => setInfoIngredient(null)}>
+        <View style={styles.infoOverlay}>
+          <View style={styles.infoCard}>
+            <Text style={styles.infoTitle}>{infoIngredient?.name}</Text>
+            <View style={styles.infoRow}>
+              <Text style={styles.infoRowLabel}>{t('ingredientModal.unit')}</Text>
+              <Text style={styles.infoRowValue}>
+                {infoIngredient?.unit ? (t(`units.${infoIngredient.unit}` as any) || infoIngredient.unit) : ''}
+              </Text>
+            </View>
+            <View style={styles.infoRow}>
+              <Text style={styles.infoRowLabel}>{t('ingredientModal.purchaseFormat')}</Text>
+              <Text style={styles.infoRowValue}>{infoIngredient ? formatPurchaseInfo(infoIngredient) : ''}</Text>
+            </View>
+            <View style={styles.infoRow}>
+              <Text style={styles.infoRowLabel}>{t('ingredientModal.category')}</Text>
+              <Text style={styles.infoRowValue}>
+                {(infoIngredient?.categories?.length ? infoIngredient.categories : infoIngredient?.category ? [infoIngredient.category] : []).join(', ') || '—'}
+              </Text>
+            </View>
+            <View style={styles.infoActions}>
+              <TouchableOpacity style={styles.infoCloseButton} onPress={() => setInfoIngredient(null)} accessibilityRole="button">
+                <Text style={styles.infoCloseText}>{t('common.close')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.infoEditButton} onPress={handleEditFromInfo} accessibilityRole="button">
+                <Text style={styles.infoEditText}>{t('common.edit')}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: colors.background,
   },
   header: {
     flexDirection: 'row',
@@ -560,13 +601,13 @@ const styles = StyleSheet.create({
   },
   backButton: {
     fontSize: 15,
-    color: '#007AFF',
+    color: colors.accent,
     fontWeight: '500',
   },
   headerTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#1a1a1a',
+    color: colors.text,
     marginLeft: 12,
   },
   scrollContent: {
@@ -579,7 +620,7 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#555',
+    color: colors.textMuted,
     marginBottom: 8,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
@@ -587,12 +628,12 @@ const styles = StyleSheet.create({
   textInput: {
     height: 44,
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: colors.border,
     borderRadius: 8,
     paddingHorizontal: 14,
     fontSize: 15,
-    color: '#1a1a1a',
-    backgroundColor: '#fafafa',
+    color: colors.text,
+    backgroundColor: colors.inputBg,
   },
   multilineInput: {
     height: 100,
@@ -600,16 +641,16 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   inputError: {
-    borderColor: '#c00',
+    borderColor: colors.danger,
   },
   errorText: {
     fontSize: 12,
-    color: '#c00',
+    color: colors.danger,
     marginTop: 4,
   },
   hintText: {
     fontSize: 12,
-    color: '#888',
+    color: colors.textFaint,
     marginTop: 4,
   },
   optionRow: {
@@ -620,27 +661,27 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 10,
     borderRadius: 8,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: colors.card,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: colors.border,
   },
   optionButtonActive: {
-    backgroundColor: '#007AFF',
-    borderColor: '#007AFF',
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
   },
   optionText: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#333',
+    color: colors.text,
   },
   optionTextActive: {
-    color: '#fff',
+    color: colors.textInverse,
   },
   searchResults: {
     marginTop: 8,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: colors.border,
     borderRadius: 8,
     overflow: 'hidden',
   },
@@ -651,19 +692,19 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: colors.border,
   },
   searchResultText: {
     fontSize: 14,
-    color: '#1a1a1a',
+    color: colors.text,
   },
   searchResultUnit: {
     fontSize: 12,
-    color: '#888',
+    color: colors.textFaint,
   },
   noResults: {
     fontSize: 13,
-    color: '#888',
+    color: colors.textFaint,
     textAlign: 'center',
     paddingVertical: 12,
   },
@@ -675,44 +716,84 @@ const styles = StyleSheet.create({
     marginTop: 8,
     paddingVertical: 10,
     paddingHorizontal: 20,
-    backgroundColor: '#007AFF',
+    backgroundColor: colors.accent,
     borderRadius: 8,
   },
   createIngredientText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.textInverse,
   },
   ingredientList: {
     marginTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#eee',
+    borderTopColor: colors.border,
   },
   noIngredients: {
     fontSize: 13,
-    color: '#888',
+    color: colors.textFaint,
     textAlign: 'center',
     paddingVertical: 16,
     fontStyle: 'italic',
   },
+  // Added-ingredient row (inline editable quantity + info/delete)
+  ingredientItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  ingredientItemName: { flex: 1, fontSize: 15, fontWeight: '500', color: colors.text },
+  ingredientQtyBox: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  ingredientQtyInput: {
+    width: 60,
+    height: 36,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    fontSize: 15,
+    color: colors.text,
+    backgroundColor: colors.inputBg,
+    textAlign: 'center',
+  },
+  ingredientQtyUnit: { fontSize: 13, color: colors.textMuted, minWidth: 44 },
+  ingredientIconButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center' },
+  ingredientIconText: { fontSize: 14 },
+  ingredientDeleteButton: { backgroundColor: colors.dangerBg },
+  ingredientDeleteText: { fontSize: 13, color: colors.danger },
+  // Ingredient info popover
+  infoOverlay: { flex: 1, backgroundColor: colors.overlay, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  infoCard: { backgroundColor: colors.surface, borderRadius: 12, padding: 20, width: '100%', maxWidth: 360 },
+  infoTitle: { fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 12 },
+  infoRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, gap: 12 },
+  infoRowLabel: { fontSize: 13, color: colors.textFaint },
+  infoRowValue: { fontSize: 14, color: colors.text, fontWeight: '500', flexShrink: 1, textAlign: 'right' },
+  infoActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 16 },
+  infoCloseButton: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, backgroundColor: colors.card },
+  infoCloseText: { fontSize: 14, fontWeight: '500', color: colors.text },
+  infoEditButton: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, backgroundColor: colors.accent },
+  infoEditText: { fontSize: 14, fontWeight: '600', color: colors.textInverse },
   // Pending ingredient card styles
   pendingCard: {
     marginTop: 8,
     padding: 14,
-    backgroundColor: '#f8f9ff',
+    backgroundColor: colors.accentSoft,
     borderWidth: 1,
-    borderColor: '#007AFF',
+    borderColor: colors.accent,
     borderRadius: 8,
   },
   pendingName: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#1a1a1a',
+    color: colors.text,
     marginBottom: 4,
   },
   pendingFormat: {
     fontSize: 12,
-    color: '#666',
+    color: colors.textMuted,
     marginBottom: 12,
   },
   pendingInputRow: {
@@ -725,7 +806,7 @@ const styles = StyleSheet.create({
   },
   unitLabel: {
     fontSize: 14,
-    color: '#555',
+    color: colors.textMuted,
     fontWeight: '500',
   },
   pendingActions: {
@@ -738,37 +819,37 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 6,
-    backgroundColor: '#f0f0f0',
+    backgroundColor: colors.card,
   },
   pendingCancelText: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#555',
+    color: colors.textMuted,
   },
   pendingConfirmButton: {
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 6,
-    backgroundColor: '#007AFF',
+    backgroundColor: colors.accent,
   },
   pendingConfirmText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.textInverse,
   },
   // Edit quantity card
   editQuantityCard: {
     padding: 14,
-    backgroundColor: '#fffbf0',
+    backgroundColor: colors.warningBg,
     borderWidth: 1,
-    borderColor: '#f0c040',
+    borderColor: colors.warning,
     borderRadius: 8,
     marginVertical: 4,
   },
   editQuantityName: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#1a1a1a',
+    color: colors.text,
     marginBottom: 8,
   },
   bottomBar: {
@@ -777,13 +858,13 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     padding: 16,
-    backgroundColor: '#fff',
+    backgroundColor: colors.surface,
     borderTopWidth: 1,
-    borderTopColor: '#eee',
+    borderTopColor: colors.border,
   },
   saveButton: {
     paddingVertical: 14,
-    backgroundColor: '#007AFF',
+    backgroundColor: colors.accent,
     borderRadius: 8,
     alignItems: 'center',
   },
@@ -793,6 +874,6 @@ const styles = StyleSheet.create({
   saveButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.textInverse,
   },
 });

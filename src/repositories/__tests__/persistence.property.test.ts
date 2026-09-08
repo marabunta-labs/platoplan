@@ -192,6 +192,23 @@ function rowToRecipe(row: Record<string, unknown>) {
 }
 
 function rowToIngredient(row: Record<string, unknown>) {
+  // Categories are persisted as a JSON array (multi-category support); the
+  // primary `category` is the first trimmed, non-empty entry (or '').
+  let category = '';
+  const rawCategory = row.category as string | null;
+  if (rawCategory) {
+    try {
+      const parsed = JSON.parse(rawCategory);
+      if (Array.isArray(parsed)) {
+        category = parsed.map((c) => String(c).trim()).filter(Boolean)[0] ?? '';
+      } else {
+        category = String(rawCategory).trim();
+      }
+    } catch {
+      category = String(rawCategory).trim();
+    }
+  }
+
   return {
     id: row.id as string,
     name: row.name as string,
@@ -200,7 +217,7 @@ function rowToIngredient(row: Record<string, unknown>) {
       description: row.purchase_format_desc as string,
       quantity: row.purchase_format_quantity as number,
     },
-    category: row.category as string,
+    category,
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
   };
@@ -308,14 +325,14 @@ describe('Property 21: Data persistence round-trip', () => {
           const now = new Date().toISOString();
           const id = `ing-${Math.random().toString(36).slice(2)}`;
 
-          // Simulate INSERT
+          // Simulate INSERT — the repository stores categories as a JSON array.
           store.ingredients.set(id, {
             id,
             name,
             unit,
             purchase_format_desc: purchaseFormat.description,
             purchase_format_quantity: purchaseFormat.quantity,
-            category,
+            category: JSON.stringify([category.trim()].filter(Boolean)),
             created_at: now,
             updated_at: now,
           });
@@ -330,7 +347,7 @@ describe('Property 21: Data persistence round-trip', () => {
           expect(ingredient.unit).toBe(unit);
           expect(ingredient.purchaseFormat.description).toBe(purchaseFormat.description);
           expect(ingredient.purchaseFormat.quantity).toBe(purchaseFormat.quantity);
-          expect(ingredient.category).toBe(category);
+          expect(ingredient.category).toBe(category.trim() ? category.trim() : '');
           expect(ingredient.createdAt.toISOString()).toBe(now);
           expect(ingredient.updatedAt.toISOString()).toBe(now);
         }
@@ -376,7 +393,7 @@ describe('Property 21: Data persistence round-trip', () => {
     fc.assert(
       fc.property(
         arbPeriodDays,
-        fc.date({ min: new Date('2024-01-01'), max: new Date('2030-12-31') }),
+        fc.date({ min: new Date('2024-01-01'), max: new Date('2030-12-31'), noInvalidDate: true }),
         fc.array(fc.integer({ min: 0, max: 29 }), { minLength: 0, maxLength: 7 }),
         (periodDays, startDate, elaborateDays) => {
           const store = createRowStore();
@@ -514,7 +531,10 @@ describe('Property 21: Data persistence round-trip', () => {
           expect(readBack.unit).toBe(unit);
           expect(readBack.purchaseFormat.description).toBe(purchaseFormat.description);
           expect(readBack.purchaseFormat.quantity).toBe(purchaseFormat.quantity);
-          expect(readBack.category).toBe(category);
+          // Categories are stored as a JSON array; the repository normalizes the
+          // primary `category` to the first (trimmed, non-empty) entry, or '' when none.
+          const expectedCategory = category.trim() ? category.trim() : '';
+          expect(readBack.category).toBe(expectedCategory);
           expect(readBack.createdAt).toBeInstanceOf(Date);
           expect(readBack.updatedAt).toBeInstanceOf(Date);
         }

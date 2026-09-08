@@ -7,7 +7,7 @@
  * Requirements: 4.1, 4.2, 4.7
  */
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -24,18 +24,24 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../context/AuthContext';
 import { authService } from '../../services/auth.service';
 import { useI18n } from '../../i18n';
+import { TermsModal } from '../../components/TermsModal';
+import { useTheme } from '../../context/ThemeContext';
+import type { ThemeColors } from '../../constants/theme';
 
 type RegisterNavigationProp = NativeStackNavigationProp<AuthStackParamList, 'Register'>;
 
 export function RegisterScreen() {
   const navigation = useNavigation<RegisterNavigationProp>();
   const { t } = useI18n();
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [termsVisible, setTermsVisible] = useState(false);
 
   const handleSignUp = async () => {
     if (!email.trim() || !password.trim()) {
@@ -100,7 +106,7 @@ export function RegisterScreen() {
               value={email}
               onChangeText={setEmail}
               placeholder={t('auth.emailPlaceholder')}
-              placeholderTextColor="#999"
+              placeholderTextColor={colors.textFaint}
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
@@ -117,7 +123,7 @@ export function RegisterScreen() {
               value={password}
               onChangeText={setPassword}
               placeholder={t('auth.passwordMinLength')}
-              placeholderTextColor="#999"
+              placeholderTextColor={colors.textFaint}
               secureTextEntry
               editable={!isLoading}
               accessibilityLabel={t('auth.password')}
@@ -133,7 +139,7 @@ export function RegisterScreen() {
             accessibilityLabel={t('auth.register')}
           >
             {isLoading ? (
-              <ActivityIndicator color="#fff" size="small" />
+              <ActivityIndicator color={colors.textInverse} size="small" />
             ) : (
               <Text style={styles.primaryButtonText}>{t('auth.register')}</Text>
             )}
@@ -151,18 +157,33 @@ export function RegisterScreen() {
               <Text style={styles.linkText}>{t('auth.login')}</Text>
             </TouchableOpacity>
           </View>
+
+          {/* Terms & Conditions */}
+          <Text style={styles.termsText}>
+            {t('terms.acceptancePrefix')}
+            <Text
+              style={styles.termsLink}
+              onPress={() => setTermsVisible(true)}
+              accessibilityRole="link"
+              accessibilityLabel={t('terms.link')}
+            >
+              {t('terms.link')}
+            </Text>
+          </Text>
         </View>
       </KeyboardAvoidingView>
+
+      <TermsModal visible={termsVisible} onClose={() => setTermsVisible(false)} />
     </SafeAreaView>
   );
 }
 
 // ─── Styles ─────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: colors.background,
   },
   container: {
     flex: 1,
@@ -182,33 +203,33 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '700',
-    color: '#1a1a1a',
+    color: colors.text,
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 16,
-    color: '#666',
+    color: colors.textMuted,
   },
   errorContainer: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: colors.dangerBg,
     borderRadius: 8,
     padding: 12,
     marginBottom: 16,
   },
   errorText: {
     fontSize: 14,
-    color: '#DC2626',
+    color: colors.danger,
     textAlign: 'center',
   },
   successContainer: {
-    backgroundColor: '#D1FAE5',
+    backgroundColor: colors.successBg,
     borderRadius: 8,
     padding: 12,
     marginBottom: 16,
   },
   successText: {
     fontSize: 14,
-    color: '#065F46',
+    color: colors.success,
     textAlign: 'center',
   },
   inputGroup: {
@@ -217,22 +238,22 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#333',
+    color: colors.text,
     marginBottom: 6,
   },
   input: {
     height: 48,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: colors.inputBg,
     borderRadius: 8,
     paddingHorizontal: 14,
     fontSize: 16,
-    color: '#1a1a1a',
+    color: colors.text,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: colors.border,
   },
   primaryButton: {
     height: 48,
-    backgroundColor: '#007AFF',
+    backgroundColor: colors.accent,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
@@ -241,7 +262,7 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.textInverse,
   },
   buttonDisabled: {
     opacity: 0.6,
@@ -253,11 +274,22 @@ const styles = StyleSheet.create({
   },
   footerText: {
     fontSize: 14,
-    color: '#666',
+    color: colors.textMuted,
   },
   linkText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#007AFF',
+    color: colors.accent,
+  },
+  termsText: {
+    fontSize: 12,
+    color: colors.textFaint,
+    textAlign: 'center',
+    marginTop: 20,
+    lineHeight: 18,
+  },
+  termsLink: {
+    color: colors.accent,
+    textDecorationLine: 'underline',
   },
 });

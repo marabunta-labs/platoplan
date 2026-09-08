@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { useTheme } from '../context/ThemeContext';
+import type { ThemeColors } from '../constants/theme';
 
 export interface EmptyStateProps {
   message: string;
@@ -8,6 +10,9 @@ export interface EmptyStateProps {
 }
 
 export const EmptyState: React.FC<EmptyStateProps> = ({ message, actionLabel, onAction }) => {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+
   return (
     <View style={styles.container} accessibilityLabel={message}>
       <Text style={styles.message}>{message}</Text>
@@ -25,7 +30,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({ message, actionLabel, on
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
     alignItems: 'center',
@@ -34,19 +39,19 @@ const styles = StyleSheet.create({
   },
   message: {
     fontSize: 15,
-    color: '#666',
+    color: colors.textMuted,
     textAlign: 'center',
     marginBottom: 16,
   },
   actionButton: {
     paddingHorizontal: 20,
     paddingVertical: 10,
-    backgroundColor: '#007AFF',
+    backgroundColor: colors.accent,
     borderRadius: 8,
   },
   actionText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.textInverse,
   },
 });

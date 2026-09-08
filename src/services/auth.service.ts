@@ -133,8 +133,18 @@ export class AuthService implements IAuthService {
    */
   async signInWithGoogle(): Promise<AuthResult> {
     try {
+      // On web, send the user back to the current origin after Google auth so
+      // the app can pick up the session from the returned URL hash. Detect web
+      // via `window` (avoids importing react-native's Platform, which breaks the
+      // non-RN test/bundler environment). Native has no window/location.origin.
+      const redirectTo =
+        typeof window !== 'undefined' && typeof window.location?.origin === 'string'
+          ? window.location.origin
+          : undefined;
+
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
+        options: redirectTo ? { redirectTo } : undefined,
       });
 
       if (error) {

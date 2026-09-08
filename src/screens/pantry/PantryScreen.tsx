@@ -27,16 +27,21 @@ import { EmptyState } from '../../components/EmptyState';
 import { SearchBar } from '../../components/SearchBar';
 import { IngredientFormModal } from '../../components/IngredientFormModal';
 import { ResponsiveLayout } from '../../components/ResponsiveLayout';
+import { SortControl } from '../../components/SortControl';
 import type { PantryEntry, Ingredient, Recipe } from '../../models/types';
 import type { PantryStackParamList } from '../../navigation/types';
 import { usePantry, useIngredients } from '../../hooks';
 import { useI18n } from '../../i18n';
 import { categoryPresentation } from '../../constants/ingredient-categories';
+import { useTheme } from '../../context/ThemeContext';
+import type { ThemeColors } from '../../constants/theme';
 
 // --- Main component ---
 
 export function PantryScreen() {
   const { t } = useI18n();
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const {
     pantryEntries,
     loading,
@@ -203,9 +208,6 @@ export function PantryScreen() {
             >
               <Text style={styles.suggestButtonText}>{t('pantry.whatCanICook')}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.sortButton} onPress={() => setSortByCategory((value) => !value)} accessibilityRole="button" accessibilityLabel="Ordenar por categoría">
-              <Text style={styles.sortButtonText}>{sortByCategory ? 'Categoría' : 'Nombre'}</Text>
-            </TouchableOpacity>
             <TouchableOpacity
               style={styles.newIngredientButton}
               onPress={() => {
@@ -230,16 +232,20 @@ export function PantryScreen() {
                 onSearch={setListQuery}
               />
             </View>
-            <TouchableOpacity
-              style={styles.sortButton}
-              onPress={() => setSortAscending((v) => !v)}
-              accessibilityRole="button"
-              accessibilityLabel={sortAscending ? t('pantry.sortDescending') : t('pantry.sortAscending')}
-            >
-              <Text style={styles.sortButtonText}>
-                {sortAscending ? 'A→Z' : 'Z→A'}
-              </Text>
-            </TouchableOpacity>
+          </View>
+        )}
+        {availableIngredients.length > 0 && (
+          <View style={styles.sortToolbar}>
+            <SortControl<'name' | 'category'>
+              fields={[
+                { key: 'name', label: t('common.sortName') },
+                { key: 'category', label: t('common.sortCategory') },
+              ]}
+              activeField={sortByCategory ? 'category' : 'name'}
+              direction={sortAscending ? 'asc' : 'desc'}
+              onFieldChange={(key) => setSortByCategory(key === 'category')}
+              onDirectionToggle={() => setSortAscending((v) => !v)}
+            />
           </View>
         )}
 
@@ -317,6 +323,8 @@ function PreparableRecipesSection({
   partial,
 }: PreparableRecipesSectionProps) {
   const { t } = useI18n();
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const totalCount = full.length + partial.length;
 
   return (
@@ -393,6 +401,8 @@ function AddIngredientModal({
   onCreateIngredient,
 }: AddIngredientModalProps) {
   const { t } = useI18n();
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIngredient, setSelectedIngredient] = useState<Ingredient | null>(null);
   const [quantityText, setQuantityText] = useState('');
@@ -542,7 +552,7 @@ function AddIngredientModal({
                   onChangeText={setQuantityText}
                   keyboardType="decimal-pad"
                   placeholder={t('pantry.quantityPlaceholder')}
-                  placeholderTextColor="#999"
+                  placeholderTextColor={colors.textFaint}
                   accessibilityLabel={t('pantry.quantityUnitLabel', { unit: t(`units.${selectedIngredient.unit}` as any) || selectedIngredient.unit })}
                   autoFocus
                 />
@@ -557,10 +567,10 @@ function AddIngredientModal({
 
 // --- Styles ---
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: colors.background,
   },
   container: {
     flex: 1,
@@ -572,12 +582,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: colors.border,
   },
   title: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#1a1a1a',
+    color: colors.text,
   },
   headerButtons: {
     flexDirection: 'row',
@@ -587,35 +597,35 @@ const styles = StyleSheet.create({
   suggestButton: {
     paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: '#FF9500',
+    backgroundColor: colors.warning,
     borderRadius: 8,
   },
   suggestButtonText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.textInverse,
   },
   newIngredientButton: {
     paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: '#34C759',
+    backgroundColor: colors.success,
     borderRadius: 8,
   },
   newIngredientButtonText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.textInverse,
   },
   addButton: {
     paddingHorizontal: 14,
     paddingVertical: 8,
-    backgroundColor: '#007AFF',
+    backgroundColor: colors.accent,
     borderRadius: 8,
   },
   addButtonText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.textInverse,
   },
   listContent: {
     paddingBottom: 24,
@@ -633,22 +643,14 @@ const styles = StyleSheet.create({
   toolbarSearch: {
     flex: 1,
   },
-  sortButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#d0d0d0',
-    backgroundColor: '#f5f5f5',
-  },
-  sortButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#333',
+  sortToolbar: {
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 2,
   },
   listSummary: {
     fontSize: 12,
-    color: '#888',
+    color: colors.textFaint,
     paddingHorizontal: 16,
     paddingVertical: 8,
   },
@@ -656,7 +658,7 @@ const styles = StyleSheet.create({
   preparableSection: {
     marginTop: 16,
     borderTopWidth: 1,
-    borderTopColor: '#eee',
+    borderTopColor: colors.border,
   },
   preparableHeader: {
     flexDirection: 'row',
@@ -664,16 +666,16 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 14,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: colors.card,
   },
   preparableTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
+    color: colors.text,
   },
   expandIcon: {
     fontSize: 12,
-    color: '#666',
+    color: colors.textMuted,
   },
   preparableContent: {
     paddingHorizontal: 16,
@@ -681,7 +683,7 @@ const styles = StyleSheet.create({
   },
   noRecipesText: {
     fontSize: 14,
-    color: '#888',
+    color: colors.textFaint,
     paddingVertical: 8,
   },
   recipeCategory: {
@@ -690,19 +692,19 @@ const styles = StyleSheet.create({
   categoryLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#555',
+    color: colors.textMuted,
     marginBottom: 4,
   },
   recipeName: {
     fontSize: 14,
-    color: '#333',
+    color: colors.text,
     paddingVertical: 2,
     paddingLeft: 8,
   },
   // Modal styles
   modalContainer: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: colors.background,
   },
   modalSafeArea: {
     flex: 1,
@@ -714,24 +716,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: colors.border,
   },
   modalTitle: {
     fontSize: 17,
     fontWeight: '600',
-    color: '#1a1a1a',
+    color: colors.text,
   },
   cancelText: {
     fontSize: 15,
-    color: '#007AFF',
+    color: colors.accent,
   },
   confirmText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#007AFF',
+    color: colors.accent,
   },
   confirmTextDisabled: {
-    color: '#ccc',
+    color: colors.borderStrong,
   },
   modalBody: {
     flex: 1,
@@ -743,19 +745,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: colors.border,
   },
   ingredientOptionName: {
     fontSize: 15,
-    color: '#1a1a1a',
+    color: colors.text,
   },
   ingredientOptionUnit: {
     fontSize: 13,
-    color: '#888',
+    color: colors.textFaint,
   },
   noResultsText: {
     fontSize: 14,
-    color: '#888',
+    color: colors.textFaint,
     textAlign: 'center',
     padding: 24,
   },
@@ -767,20 +769,20 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    backgroundColor: '#34C759',
+    backgroundColor: colors.success,
     borderRadius: 8,
   },
   createIngredientActionText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.textInverse,
   },
   selectedSection: {
     padding: 16,
   },
   selectedLabel: {
     fontSize: 13,
-    color: '#888',
+    color: colors.textFaint,
     marginBottom: 4,
   },
   selectedIngredient: {
@@ -789,38 +791,38 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 12,
     paddingHorizontal: 12,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: colors.card,
     borderRadius: 8,
     marginBottom: 16,
   },
   selectedName: {
     fontSize: 16,
     fontWeight: '500',
-    color: '#1a1a1a',
+    color: colors.text,
   },
   changeText: {
     fontSize: 14,
-    color: '#007AFF',
+    color: colors.accent,
   },
   existingQtyText: {
     fontSize: 13,
-    color: '#E67E22',
+    color: colors.warningText,
     marginBottom: 12,
     fontStyle: 'italic',
   },
   quantityLabel: {
     fontSize: 14,
-    color: '#555',
+    color: colors.textMuted,
     marginBottom: 8,
   },
   quantityInput: {
     height: 48,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: colors.card,
     borderRadius: 8,
     paddingHorizontal: 14,
     fontSize: 18,
-    color: '#1a1a1a',
+    color: colors.text,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: colors.border,
   },
 });

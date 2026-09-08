@@ -7,7 +7,7 @@
  * - Confirm button enabled when counts match
  */
 
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -27,6 +27,9 @@ import { useRecipes, usePlanning, useIngredients } from '../../hooks';
 import { planMeals } from '../../services/smart-distribution';
 import { AlertCompat } from '../../utils/alert';
 import { useI18n } from '../../i18n';
+import { useTheme } from '../../context/ThemeContext';
+import type { ThemeColors } from '../../constants/theme';
+import { confirmLeavePlan } from './confirmLeavePlan';
 
 type NavigationProp = NativeStackNavigationProp<PlanningStackParamList, 'RecipeSelection'>;
 type ScreenRoute = RouteProp<PlanningStackParamList, 'RecipeSelection'>;
@@ -36,8 +39,21 @@ interface RecipeSelection {
   count: number;
 }
 
+/** Stable, order-independent signature of the selected recipe counts. */
+function selectionSignature(lunch: RecipeSelection[], dinner: RecipeSelection[]): string {
+  const norm = (list: RecipeSelection[]) =>
+    list
+      .filter((s) => s.count > 0)
+      .map((s) => `${s.recipeId}:${s.count}`)
+      .sort()
+      .join(',');
+  return `L[${norm(lunch)}]D[${norm(dinner)}]`;
+}
+
 export function RecipeSelectionScreen() {
   const { t, locale } = useI18n();
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<ScreenRoute>();
   const { planId } = route.params;
@@ -51,6 +67,12 @@ export function RecipeSelectionScreen() {
 
   const [lunchSelections, setLunchSelections] = useState<RecipeSelection[]>([]);
   const [dinnerSelections, setDinnerSelections] = useState<RecipeSelection[]>([]);
+
+  // Signature of the recipe counts loaded from the existing plan. If the user
+  // returns to this step and doesn't change any quantity, we keep the manual
+  // day-by-day arrangement they built in the calendar instead of regenerating.
+  const loadedSignatureRef = useRef<string | null>(null);
+  const hadAssignmentsRef = useRef(false);
 
   useEffect(() => {
     setPlanLoading(true);
@@ -70,8 +92,15 @@ export function RecipeSelectionScreen() {
           }
         });
         
-        setLunchSelections(Object.entries(lunchCounts).map(([recipeId, count]) => ({ recipeId, count })));
-        setDinnerSelections(Object.entries(dinnerCounts).map(([recipeId, count]) => ({ recipeId, count })));
+        const loadedLunch = Object.entries(lunchCounts).map(([recipeId, count]) => ({ recipeId, count }));
+        const loadedDinner = Object.entries(dinnerCounts).map(([recipeId, count]) => ({ recipeId, count }));
+        setLunchSelections(loadedLunch);
+        setDinnerSelections(loadedDinner);
+        loadedSignatureRef.current = selectionSignature(loadedLunch, loadedDinner);
+        hadAssignmentsRef.current = true;
+      } else {
+        loadedSignatureRef.current = selectionSignature([], []);
+        hadAssignmentsRef.current = false;
       }
       
       setPlanLoading(false);
@@ -177,6 +206,16 @@ export function RecipeSelectionScreen() {
 
   const runDistribution = useCallback(async () => {
     if (!plan) return;
+
+    // If the plan already had a distribution and the user didn't change any
+    // recipe quantity, keep the manual day arrangement (don't regenerate, which
+    // would wipe the calendar layout). Just continue to the calendar.
+    const currentSignature = selectionSignature(lunchSelections, dinnerSelections);
+    if (hadAssignmentsRef.current && currentSignature === loadedSignatureRef.current) {
+      navigation.navigate('PlanCalendar', { planId });
+      return;
+    }
+
     setGenerating(true);
     try {
       const recipesById = new Map(recipes.map((r) => [r.id, r]));
@@ -290,9 +329,9 @@ export function RecipeSelectionScreen() {
 
   if (planLoading) {
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' }}>
-        <ActivityIndicator size="large" color="#007AFF" />
-        <Text style={{ marginTop: 12, color: '#666' }}>{t('common.loading')}</Text>
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background }}>
+        <ActivityIndicator size="large" color={colors.accent} />
+        <Text style={{ marginTop: 12, color: colors.textMuted }}>{t('common.loading')}</Text>
       </View>
     );
   }
@@ -303,10 +342,16 @@ export function RecipeSelectionScreen() {
         <TouchableOpacity onPress={() => navigation.goBack()} accessibilityRole="button">
           <Text style={styles.backButton}>{t('common.back')}</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{t('planning.selectRecipes')}</Text>
+        <View>
+          <Text style={styles.stepBadge}>{t('planning.stepCounter', { current: 6, total: 7 })}</Text>
+          <Text style={styles.headerTitle}>{t('planning.selectRecipes')}</Text>
+        </View>
         <View style={{ flex: 1 }} />
-        <TouchableOpacity onPress={() => navigation.navigate('PlanHistory' as any)} accessibilityRole="button">
-          <Text style={{ fontSize: 15, color: '#C0392B', fontWeight: '600' }}>Salir</Text>
+        <TouchableOpacity
+          onPress={() => confirmLeavePlan(t, () => navigation.navigate('PlanHistory' as any))}
+          accessibilityRole="button"
+        >
+          <Text style={styles.exitButton}>{t('planning.exit')}</Text>
         </TouchableOpacity>
       </View>
 
@@ -398,41 +443,43 @@ export function RecipeSelectionScreen() {
             (!canConfirm || generating) && styles.confirmButtonTextDisabled,
           ]}
         >
-          {generating ? t('planning.generating') : 'Siguiente'}
+          {generating ? t('planning.generating') : t('planning.next')}
         </Text>
       </TouchableOpacity>
     </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background },
   content: { padding: 16, paddingBottom: 40 },
   header: { flexDirection: 'row', alignItems: 'center', marginBottom: 24 },
-  backButton: { fontSize: 15, color: '#007AFF', fontWeight: '500' },
-  headerTitle: { fontSize: 24, fontWeight: '700', color: '#1a1a1a', marginLeft: 12 },
-  title: { fontSize: 24, fontWeight: '700', color: '#1a1a1a', marginBottom: 24 },
+  backButton: { fontSize: 15, color: colors.accent, fontWeight: '500' },
+  headerTitle: { fontSize: 24, fontWeight: '700', color: colors.text, marginLeft: 12 },
+  stepBadge: { fontSize: 12, fontWeight: '600', color: colors.textFaint, marginLeft: 12, textTransform: 'uppercase' },
+  exitButton: { fontSize: 15, color: colors.dangerText, fontWeight: '600' },
+  title: { fontSize: 24, fontWeight: '700', color: colors.text, marginBottom: 24 },
   section: { marginBottom: 24 },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  sectionTitle: { fontSize: 18, fontWeight: '600', color: '#333' },
+  sectionTitle: { fontSize: 18, fontWeight: '600', color: colors.text },
   counter: { fontSize: 16, fontWeight: '700', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, overflow: 'hidden' },
-  counterMatch: { backgroundColor: '#e8f5e9', color: '#2e7d32' },
-  counterMismatch: { backgroundColor: '#fff3e0', color: '#e65100' },
-  diffText: { fontSize: 13, color: '#e65100', marginBottom: 8 },
-  emptyText: { fontSize: 14, color: '#888', fontStyle: 'italic', paddingVertical: 12 },
-  recipeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#eee' },
+  counterMatch: { backgroundColor: colors.successBg, color: colors.successText },
+  counterMismatch: { backgroundColor: colors.warningBg, color: colors.warningText },
+  diffText: { fontSize: 13, color: colors.warningText, marginBottom: 8 },
+  emptyText: { fontSize: 14, color: colors.textFaint, fontStyle: 'italic', paddingVertical: 12 },
+  recipeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   recipeInfo: { flex: 1, marginRight: 12 },
-  recipeName: { fontSize: 15, fontWeight: '500', color: '#1a1a1a' },
-  recipeMeta: { fontSize: 12, color: '#888', marginTop: 2 },
+  recipeName: { fontSize: 15, fontWeight: '500', color: colors.text },
+  recipeMeta: { fontSize: 12, color: colors.textFaint, marginTop: 2 },
   counterContainer: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  counterButton: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#007AFF', alignItems: 'center', justifyContent: 'center' },
-  counterButtonDisabled: { backgroundColor: '#ddd' },
-  counterButtonText: { fontSize: 18, fontWeight: '600', color: '#fff' },
-  counterValue: { fontSize: 16, fontWeight: '700', color: '#333', minWidth: 24, textAlign: 'center' },
-  warningBox: { backgroundColor: '#fff3e0', borderRadius: 8, padding: 12, marginBottom: 16 },
-  warningText: { fontSize: 13, color: '#e65100' },
-  confirmButton: { backgroundColor: '#4CAF50', borderRadius: 10, paddingVertical: 14, alignItems: 'center', marginTop: 8 },
-  confirmButtonDisabled: { backgroundColor: '#ccc' },
-  confirmButtonText: { fontSize: 16, fontWeight: '600', color: '#fff' },
-  confirmButtonTextDisabled: { color: '#888' },
+  counterButton: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
+  counterButtonDisabled: { backgroundColor: colors.border },
+  counterButtonText: { fontSize: 18, fontWeight: '600', color: colors.textInverse },
+  counterValue: { fontSize: 16, fontWeight: '700', color: colors.text, minWidth: 24, textAlign: 'center' },
+  warningBox: { backgroundColor: colors.warningBg, borderRadius: 8, padding: 12, marginBottom: 16 },
+  warningText: { fontSize: 13, color: colors.warningText },
+  confirmButton: { backgroundColor: colors.success, borderRadius: 10, paddingVertical: 14, alignItems: 'center', marginTop: 8 },
+  confirmButtonDisabled: { backgroundColor: colors.borderStrong },
+  confirmButtonText: { fontSize: 16, fontWeight: '600', color: colors.textInverse },
+  confirmButtonTextDisabled: { color: colors.textFaint },
 });

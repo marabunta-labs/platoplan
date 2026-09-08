@@ -28,13 +28,19 @@ import type { MealSlot } from '../../models/enums';
 import { CalendarGrid, ConfirmDialog, type SlotRef } from '../../components';
 import { usePlanning, useRecipes } from '../../hooks';
 import { useI18n } from '../../i18n';
+import { useTheme } from '../../context/ThemeContext';
+import type { ThemeColors } from '../../constants/theme';
 import { AlertCompat } from '../../utils/alert';
 import { shareText } from '../../utils/share';
+import { exportPdf, escapeHtml } from '../../utils/exportPdf';
+import { confirmLeavePlan } from './confirmLeavePlan';
 
 type ScreenRoute = RouteProp<PlanningStackParamList, 'PlanCalendar'>;
 
 export function PlanCalendarScreen() {
   const { t, locale } = useI18n();
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const navigation = useNavigation();
   const route = useRoute<ScreenRoute>();
   const { planId } = route.params;
@@ -62,14 +68,16 @@ export function PlanCalendarScreen() {
     }
   }, [activePlan, planId]);
 
-  const [draggingSlot, setDraggingSlot] = useState<SlotRef | { isUnassigned: true; recipeId: string } | null>(null);
+  const [draggingSlot, setDraggingSlot] = useState<SlotRef | { isUnassigned: true; recipeId: string; index: number } | null>(null);
   const [unassignedRecipeIds, setUnassignedRecipeIds] = useState<string[]>([]);
   const [orientation, setOrientation] = useState<'vertical' | 'horizontal'>('vertical');
   
   const [showDoneOptions, setShowDoneOptions] = useState(false);
+  const [pdfChoiceVisible, setPdfChoiceVisible] = useState(false);
 
   const [selectedSlot, setSelectedSlot] = useState<{ day: number; slot: MealSlot; } | null>(null);
   const [pickerVisible, setPickerVisible] = useState(false);
+  const [recipeSearch, setRecipeSearch] = useState('');
 
   const [editingNote, setEditingNote] = useState<{
     type: 'day' | 'meal';
@@ -86,6 +94,7 @@ export function PlanCalendarScreen() {
     conflictMessage: string;
   } | null>(null);
   const [pendingMove, setPendingMove] = useState<{ from: SlotRef; to: SlotRef; clearsFree?: boolean } | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<SlotRef | { isUnassigned: true; recipeId: string; index: number } | null>(null);
 
   const [warnings, setWarnings] = useState<string[]>([]);
 
@@ -170,11 +179,138 @@ export function PlanCalendarScreen() {
     setShowDoneOptions(false);
   }, [plan, recipes]);
 
+  const handleExportPdf = useCallback((orient: 'vertical' | 'horizontal' = 'vertical') => {
+    if (!plan) return;
+
+    const startDate = plan.startDate instanceof Date ? plan.startDate : new Date(plan.startDate);
+    const endDate = new Date(startDate);
+    endDate.setDate(endDate.getDate() + plan.periodDays - 1);
+    const startStr = `${String(startDate.getDate()).padStart(2, '0')}/${String(startDate.getMonth() + 1).padStart(2, '0')}`;
+    const endStr = `${String(endDate.getDate()).padStart(2, '0')}/${String(endDate.getMonth() + 1).padStart(2, '0')}`;
+
+    const recipeName = (recipeId: string, recipe?: Recipe) =>
+      recipe?.name ?? recipes.find((r) => r.id === recipeId)?.name ?? '';
+
+    // Builds one meal card matching the app's calendar card look.
+    const cardFor = (day: number, slot: MealSlot): string => {
+      const slotLabel = escapeHtml(slot === 'comida' ? t('mealTypes.comida') : t('mealTypes.cena'));
+      const note = plan.mealNotes?.[`${day}:${slot}`];
+      const noteHtml = note ? `<div class="card-note">📌 ${escapeHtml(note)}</div>` : '';
+
+      const freeDay = plan.freeDays.find((fd) => fd.dayIndex === day);
+      const isFree = freeDay && (freeDay.type === slot || freeDay.type === 'ambas');
+      if (isFree) {
+        return `<div class="card card-free"><div class="card-label card-label-free">${slotLabel}</div><div class="card-value card-value-free">${escapeHtml(t('planning.notNeeded'))}</div>${noteHtml}</div>`;
+      }
+      const assignment = plan.assignments.find((a) => a.dayIndex === day && a.slot === slot);
+      if (!assignment) {
+        return `<div class="card card-empty"><div class="card-label">${slotLabel}</div><div class="card-value card-value-empty">${escapeHtml(t('planning.emptySlot'))}</div>${noteHtml}</div>`;
+      }
+      const recipeData = assignment.recipe ?? recipes.find((r) => r.id === assignment.recipeId);
+      const name = recipeName(assignment.recipeId, assignment.recipe);
+      const complex = recipeData?.prepTime === 'elaborado' ? ' card-complex' : '';
+      return `<div class="card${complex}"><div class="card-label">${slotLabel}</div><div class="card-value">${escapeHtml(name)}</div>${noteHtml}</div>`;
+    };
+
+    const elaborateReminders: string[] = [];
+    const dayBlocks: string[] = [];
+    for (let day = 0; day < plan.periodDays; day++) {
+      const date = new Date(startDate);
+      date.setDate(date.getDate() + day);
+      const weekday = escapeHtml(DAY_NAMES[date.getDay()]);
+      const dayNum = String(date.getDate()).padStart(2, '0');
+      const monthNum = String(date.getMonth() + 1).padStart(2, '0');
+      const dayNote = plan.dayNotes?.[day.toString()];
+      const dayNoteHtml = dayNote ? `<div class="day-note">📝 ${escapeHtml(dayNote)}</div>` : '';
+
+      for (const slot of ['comida', 'cena'] as MealSlot[]) {
+        const assignment = plan.assignments.find((a) => a.dayIndex === day && a.slot === slot);
+        const recipeData = assignment?.recipe ?? (assignment ? recipes.find((r) => r.id === assignment.recipeId) : undefined);
+        if (recipeData?.prepTime === 'elaborado' && day > 0) {
+          const prevDayLabel = formatExportDate(startDate, day - 1);
+          elaborateReminders.push(`${prevDayLabel}: ${t('planning.prepareAhead', { name: recipeData.name })}`);
+        }
+      }
+
+      dayBlocks.push(
+        `<div class="day-block">` +
+          `<div class="day-row">` +
+            `<div class="day-date"><div class="day-weekday">${weekday}</div><div class="day-number">${dayNum}</div><div class="day-month">${monthNum}</div></div>` +
+            `<div class="day-cards">${cardFor(day, 'comida')}${cardFor(day, 'cena')}</div>` +
+          `</div>` +
+          dayNoteHtml +
+        `</div>`
+      );
+    }
+
+    const remindersHtml = elaborateReminders.length > 0
+      ? `<div class="reminders"><h2>⚠️ ${escapeHtml(t('planning.prepareAheadTitle'))}</h2><ul>${elaborateReminders.map((r) => `<li>${escapeHtml(r)}</li>`).join('')}</ul></div>`
+      : '';
+
+    // Horizontal layout: a weeks grid (Mon–Sun columns) mirroring the calendar.
+    const MONTHS_ABBR = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+    const WEEKDAYS_MON = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+
+    const weekCellFor = (day: number): string => {
+      const date = new Date(startDate);
+      date.setDate(date.getDate() + day);
+      const dayNum = String(date.getDate());
+      const monthAbbr = MONTHS_ABBR[date.getMonth()];
+      const weekdayAbbr = WEEKDAYS_MON[(date.getDay() + 6) % 7];
+      const dayNote = plan.dayNotes?.[day.toString()];
+      const dayNoteHtml = dayNote ? `<div class="day-note">📝 ${escapeHtml(dayNote)}</div>` : '';
+      return `<div class="week-cell">` +
+        `<div class="week-date"><span class="day-weekday">${escapeHtml(weekdayAbbr)}</span><span class="day-number">${dayNum}</span><span class="day-month">${escapeHtml(monthAbbr)}</span></div>` +
+        cardFor(day, 'comida') + cardFor(day, 'cena') + dayNoteHtml +
+      `</div>`;
+    };
+
+    // Group days into Monday-first weeks, padding the first week with blanks.
+    const startOffset = (startDate.getDay() + 6) % 7;
+    const weeks: (number | null)[][] = [];
+    let current: (number | null)[] = Array.from({ length: startOffset }, () => null);
+    for (let day = 0; day < plan.periodDays; day++) {
+      current.push(day);
+      if (current.length === 7) { weeks.push(current); current = []; }
+    }
+    if (current.length > 0) { while (current.length < 7) current.push(null); weeks.push(current); }
+
+    const weeksHtml =
+      `<div class="weeks">` +
+        `<div class="week-header">${WEEKDAYS_MON.map((wd) => `<div class="week-header-cell">${escapeHtml(wd)}</div>`).join('')}</div>` +
+        weeks.map((week) =>
+          `<div class="week-row">${week.map((d) => d === null ? `<div class="week-cell week-cell-empty"></div>` : weekCellFor(d)).join('')}</div>`
+        ).join('') +
+      `</div>`;
+
+    const daysHtml = orient === 'horizontal' ? weeksHtml : `<div class="days">${dayBlocks.join('')}</div>`;
+
+    const bodyHtml =
+      `<h1>🗓️ ${escapeHtml(plan.name || t('planning.calendarTitle'))}</h1>` +
+      `<p class="subtitle">${startStr} – ${endStr} · 👥 ${escapeHtml(t('planning.servingsSummary', { count: plan.servings }))}</p>` +
+      daysHtml +
+      remindersHtml;
+
+    exportPdf({ title: plan.name || t('planning.calendarTitle'), bodyHtml, orientation: orient });
+    setShowDoneOptions(false);
+  }, [plan, recipes, t]);
+
   const availableRecipes = useMemo(() => {
     if (!selectedSlot) return [];
+    const query = recipeSearch.trim().toLowerCase();
     return recipes.filter((r) => r.mealType === selectedSlot.slot || r.mealType === 'ambas')
+      .filter((r) => query === '' || r.name.toLowerCase().includes(query))
       .sort((a, b) => a.name.localeCompare(b.name, locale));
-  }, [selectedSlot, recipes, locale]);
+  }, [selectedSlot, recipes, locale, recipeSearch]);
+
+  // Recipes currently sitting in the "unassigned" drawer that fit this slot,
+  // offered as quick candidates at the top of the picker.
+  const unassignedForSlot = useMemo(() => {
+    if (!selectedSlot) return [] as Recipe[];
+    return unassignedRecipeIds
+      .map((id) => recipes.find((r) => r.id === id))
+      .filter((r): r is Recipe => Boolean(r) && (r!.mealType === selectedSlot.slot || r!.mealType === 'ambas'));
+  }, [selectedSlot, unassignedRecipeIds, recipes]);
 
   const checkConflict = useCallback((day: number, slot: MealSlot, recipeId: string): string | null => {
     if (!plan) return null;
@@ -192,8 +328,18 @@ export function PlanCalendarScreen() {
 
   const handleSlotPress = useCallback((day: number, slot: MealSlot) => {
     setSelectedSlot({ day, slot });
+    setRecipeSearch('');
     setPickerVisible(true);
   }, []);
+
+  // Picks up the meal in the currently-selected slot for tap-to-move, and
+  // closes the picker so the user can tap a destination slot.
+  const handleMoveSelected = useCallback(() => {
+    if (!selectedSlot) return;
+    setDraggingSlot({ day: selectedSlot.day, slot: selectedSlot.slot });
+    setPickerVisible(false);
+    setSelectedSlot(null);
+  }, [selectedSlot]);
 
   const handleRecipePick = useCallback((recipe: Recipe) => {
     if (!selectedSlot) return;
@@ -328,10 +474,12 @@ export function PlanCalendarScreen() {
     }
 
     await applyDistribution(plan.id, plan.assignments.filter((a) => a.id !== source.id).map((a) => ({ dayIndex: a.dayIndex, slot: a.slot, recipeId: a.recipeId })));
-    setUnassignedRecipeIds((prev) => prev.includes(source.recipeId) ? prev : [...prev, source.recipeId]);
+    // Allow the same recipe to sit in the drawer more than once (e.g. the same
+    // dish removed from two different days), so we always append a new instance.
+    setUnassignedRecipeIds((prev) => [...prev, source.recipeId]);
   }, [plan, applyDistribution, updatePlan]);
 
-  const handleMoveFromUnassigned = useCallback(async (recipeId: string, to: SlotRef) => {
+  const handleMoveFromUnassigned = useCallback(async (recipeId: string, to: SlotRef, index?: number) => {
     if (!plan) return;
     const recipe = recipes.find((item) => item.id === recipeId);
     if (!recipe || (recipe.mealType !== 'ambas' && recipe.mealType !== to.slot)) return;
@@ -339,8 +487,63 @@ export function PlanCalendarScreen() {
     const next = plan.assignments.filter((a) => a.id !== target?.id).map((a) => ({ dayIndex: a.dayIndex, slot: a.slot, recipeId: a.recipeId }));
     next.push({ dayIndex: to.day, slot: to.slot, recipeId });
     await applyDistribution(plan.id, next);
-    setUnassignedRecipeIds((prev) => [...prev.filter((id) => id !== recipeId), ...(target && !prev.includes(target.recipeId) ? [target.recipeId] : [])]);
+    // Remove exactly the dragged instance from the drawer (by position when we
+    // know it), then append whatever recipe used to occupy the target slot.
+    setUnassignedRecipeIds((prev) => {
+      const withoutInstance = typeof index === 'number' && prev[index] === recipeId
+        ? prev.filter((_, i) => i !== index)
+        : (() => { const i = prev.indexOf(recipeId); return i >= 0 ? prev.filter((_, idx) => idx !== i) : prev; })();
+      return target ? [...withoutInstance, target.recipeId] : withoutInstance;
+    });
   }, [plan, recipes, applyDistribution]);
+
+  // Dropping on the trash asks for confirmation first (keep the picked item
+  // around until the user confirms or cancels).
+  const handleDeleteDragged = useCallback((target: SlotRef | { isUnassigned: true; recipeId: string; index: number }) => {
+    setPendingDelete(target);
+  }, []);
+
+  const cancelDelete = useCallback(() => {
+    setPendingDelete(null);
+    setDraggingSlot(null);
+  }, []);
+
+  const confirmDelete = useCallback(async () => {
+    const target = pendingDelete;
+    setPendingDelete(null);
+    setDraggingSlot(null);
+    if (!plan || !target) return;
+    if ('isUnassigned' in target) {
+      // Remove exactly that instance from the drawer.
+      setUnassignedRecipeIds((prev) =>
+        prev[target.index] === target.recipeId
+          ? prev.filter((_, i) => i !== target.index)
+          : (() => { const i = prev.indexOf(target.recipeId); return i >= 0 ? prev.filter((_, idx) => idx !== i) : prev; })()
+      );
+      return;
+    }
+    // Delete a calendar meal entirely (do not send it to the drawer).
+    const source = plan.assignments.find((a) => a.dayIndex === target.day && a.slot === target.slot);
+    if (!source) return;
+    const fromKey = `${target.day}:${target.slot}`;
+    if (plan.mealNotes && plan.mealNotes[fromKey]) {
+      const newMealNotes = { ...plan.mealNotes };
+      delete newMealNotes[fromKey];
+      setPlan((prev) => prev ? { ...prev, mealNotes: newMealNotes } : prev);
+      updatePlan(plan.id, { mealNotes: newMealNotes } as any).catch(console.error);
+    }
+    await applyDistribution(plan.id, plan.assignments.filter((a) => a.id !== source.id).map((a) => ({ dayIndex: a.dayIndex, slot: a.slot, recipeId: a.recipeId })));
+  }, [pendingDelete, plan, applyDistribution, updatePlan]);
+
+  // Human-readable name of whatever is pending deletion, for the confirm dialog.
+  const pendingDeleteName = useMemo(() => {
+    if (!pendingDelete) return '';
+    if ('isUnassigned' in pendingDelete) {
+      return recipes.find((r) => r.id === pendingDelete.recipeId)?.name ?? '';
+    }
+    const a = plan?.assignments.find((x) => x.dayIndex === pendingDelete.day && x.slot === pendingDelete.slot);
+    return a ? (a.recipe?.name ?? recipes.find((r) => r.id === a.recipeId)?.name ?? '') : '';
+  }, [pendingDelete, plan, recipes]);
 
   const gapCount = useMemo(() => {
     if (!plan) return 0;
@@ -381,6 +584,7 @@ export function PlanCalendarScreen() {
   const handleClosePicker = useCallback(() => {
     setPickerVisible(false);
     setSelectedSlot(null);
+    setRecipeSearch('');
   }, []);
 
   const handleRemoveSelected = useCallback(async () => {
@@ -409,8 +613,8 @@ export function PlanCalendarScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={{ marginTop: 12, color: '#666' }}>{t('common.loading')}</Text>
+          <ActivityIndicator size="large" color={colors.accent} />
+          <Text style={{ marginTop: 12, color: colors.textMuted }}>{t('common.loading')}</Text>
         </View>
       </SafeAreaView>
     );
@@ -422,25 +626,41 @@ export function PlanCalendarScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerTopRow}>
-          <TouchableOpacity onPress={() => navigation.goBack()} accessibilityRole="button">
+          <TouchableOpacity
+            onPress={() => navigation.navigate('RecipeSelection', { planId: plan.id })}
+            accessibilityRole="button"
+          >
             <Text style={styles.backButton}>{t('common.back')}</Text>
           </TouchableOpacity>
+          <View style={{ flex: 1 }} />
+          <TouchableOpacity
+            onPress={() => confirmLeavePlan(t, () => navigation.navigate('PlanHistory' as any))}
+            accessibilityRole="button"
+          >
+            <Text style={styles.exitButton}>{t('planning.exit')}</Text>
+          </TouchableOpacity>
         </View>
+        <Text style={styles.stepBadge}>{t('planning.stepCounter', { current: 7, total: 7 })}</Text>
         <Text style={styles.title}>{t('planning.calendarTitle')}</Text>
         <View style={styles.headerRow}>
           <Text style={styles.subtitle}>
             {t('planning.periodInfo', { days: plan.periodDays })}
           </Text>
-          <TouchableOpacity style={styles.orientationButton} onPress={() => setOrientation((val) => val === 'vertical' ? 'horizontal' : 'vertical')}>
-            <Text style={styles.orientationButtonText}>{orientation === 'vertical' ? '↔ Horizontal' : '↕ Vertical'}</Text>
-          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            <TouchableOpacity style={styles.pdfButton} onPress={() => setPdfChoiceVisible(true)} accessibilityRole="button" accessibilityLabel={t('planning.exportAsPdf')}>
+              <Text style={styles.pdfButtonText}>🖨️ PDF</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.orientationButton} onPress={() => setOrientation((val) => val === 'vertical' ? 'horizontal' : 'vertical')}>
+              <Text style={styles.orientationButtonText}>{orientation === 'vertical' ? `↔ ${t('planning.horizontal')}` : `↕ ${t('planning.vertical')}`}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
 
       <View style={{ flex: 1 }}>
         {warnings.length > 0 && (
           <View style={styles.warningsContainer}>
-            <Text style={styles.warningsTitle}>⚠️ Advertencias</Text>
+            <Text style={styles.warningsTitle}>{t('planning.warningsTitle')}</Text>
             {warnings.map((warning, index) => (
               <Text key={index} style={styles.warningText}>• {warning}</Text>
             ))}
@@ -462,6 +682,7 @@ export function PlanCalendarScreen() {
           onMove={handleMove}
           onMoveToUnassigned={handleMoveToUnassigned}
           onMoveFromUnassigned={handleMoveFromUnassigned}
+          onDeleteDragged={handleDeleteDragged}
           orientation={orientation}
         />
       </View>
@@ -473,30 +694,34 @@ export function PlanCalendarScreen() {
           </Text>
         )}
         <TouchableOpacity style={styles.finishButton} onPress={handleFinishPress}>
-          <Text style={styles.finishButtonText}>Hecho</Text>
+          <Text style={styles.finishButtonText}>{t('planning.done')}</Text>
         </TouchableOpacity>
       </View>
 
       <Modal visible={showDoneOptions} transparent animationType="fade" onRequestClose={() => setShowDoneOptions(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>¡Plan Guardado!</Text>
-            <Text style={styles.modalText}>¿Qué quieres hacer ahora?</Text>
+            <Text style={styles.modalTitle}>{t('planning.planSaved')}</Text>
+            <Text style={styles.modalText}>{t('planning.whatNext')}</Text>
             
             <TouchableOpacity style={[styles.modalButton, styles.modalButtonPrimary]} onPress={() => { setShowDoneOptions(false); navigation.navigate('ShoppingTab' as any, { screen: 'ShoppingList', params: { planId: plan.id } }); }}>
-              <Text style={styles.modalButtonTextPrimary}>Ver lista de la compra</Text>
+              <Text style={styles.modalButtonTextPrimary}>{t('planning.viewShoppingList')}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={[styles.modalButton, styles.modalButtonSecondary]} onPress={handleExport}>
-              <Text style={styles.modalButtonTextSecondary}>Exportar plan como texto</Text>
+              <Text style={styles.modalButtonTextSecondary}>{t('planning.exportAsText')}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.modalButton, styles.modalButtonSecondary]} onPress={() => { setShowDoneOptions(false); setPdfChoiceVisible(true); }}>
+              <Text style={styles.modalButtonTextSecondary}>{t('planning.exportAsPdf')}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={[styles.modalButton, styles.modalButtonCancel, { marginTop: 8 }]} onPress={() => { setShowDoneOptions(false); navigation.navigate('PlanHistory' as any); }}>
-              <Text style={[styles.modalButtonTextCancel, { color: '#C0392B' }]}>Salir al Historial</Text>
+              <Text style={[styles.modalButtonTextCancel, { color: colors.dangerText }]}>{t('planning.exitToHistory')}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={[styles.modalButton, styles.modalButtonCancel]} onPress={() => setShowDoneOptions(false)}>
-              <Text style={styles.modalButtonTextCancel}>Cerrar y seguir editando</Text>
+              <Text style={styles.modalButtonTextCancel}>{t('planning.keepEditingClose')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -507,7 +732,7 @@ export function PlanCalendarScreen() {
           <View style={styles.pickerContainer}>
             <View style={styles.pickerHeader}>
               <Text style={styles.pickerTitle}>
-                {editingNote?.type === 'day' ? `Nota del Día ${editingNote.day + 1}` : `Nota de la ${editingNote?.slot}`}
+                {editingNote?.type === 'day' ? t('planning.dayNoteTitle', { day: editingNote.day + 1 }) : t('planning.mealNoteTitle', { slot: editingNote?.slot ? t(`mealTypes.${editingNote.slot}` as any) : '' })}
               </Text>
               <TouchableOpacity onPress={() => setEditingNote(null)}>
                 <Text style={styles.pickerClose}>✕</Text>
@@ -517,12 +742,12 @@ export function PlanCalendarScreen() {
               <TextInput
                 style={styles.noteInput}
                 multiline
-                placeholder="Escribe aquí aclaraciones, recordatorios o cambios..."
+                placeholder={t('planning.notePlaceholder')}
                 value={editingNote?.text || ''}
                 onChangeText={(text) => setEditingNote(prev => prev ? { ...prev, text } : null)}
               />
               <TouchableOpacity style={styles.saveNoteButton} onPress={handleSaveNote}>
-                <Text style={styles.saveNoteButtonText}>Guardar Nota</Text>
+                <Text style={styles.saveNoteButtonText}>{t('planning.saveNote')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -548,22 +773,56 @@ export function PlanCalendarScreen() {
                 setPickerVisible(false);
               }}
             >
-              <Text style={styles.noteButtonText}>📝 {currentMealNote ? 'Editar nota de comida' : 'Añadir nota a esta comida'}</Text>
+              <Text style={styles.noteButtonText}>📝 {currentMealNote ? t('planning.editMealNote') : t('planning.addMealNote')}</Text>
             </TouchableOpacity>
 
             {selectedSlot && plan.assignments.some((a) => a.dayIndex === selectedSlot.day && a.slot === selectedSlot.slot) && (
-              <TouchableOpacity style={styles.removeAssignmentButton} onPress={handleRemoveSelected}>
-                <Text style={styles.removeAssignmentText}>Eliminar esta comida</Text>
-              </TouchableOpacity>
+              <>
+                <TouchableOpacity style={styles.moveAssignmentButton} onPress={handleMoveSelected}>
+                  <Text style={styles.moveAssignmentText}>↔ {t('planning.moveMeal')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.removeAssignmentButton} onPress={handleRemoveSelected}>
+                  <Text style={styles.removeAssignmentText}>{t('planning.removeMeal')}</Text>
+                </TouchableOpacity>
+              </>
             )}
             {selectedSlot && !plan.freeDays.some((fd) => fd.dayIndex === selectedSlot.day && (fd.type === selectedSlot.slot || fd.type === 'ambas')) && (
               <TouchableOpacity style={styles.markFreeButton} onPress={handleMarkSelectedFree}>
-                <Text style={styles.markFreeText}>Marcar {selectedSlot.slot} como no necesaria</Text>
+                <Text style={styles.markFreeText}>{t('planning.markNotNeeded', { slot: t(`mealTypes.${selectedSlot.slot}` as any) })}</Text>
               </TouchableOpacity>
             )}
+
+            <TextInput
+              style={styles.searchInput}
+              placeholder={t('planning.searchRecipes')}
+              value={recipeSearch}
+              onChangeText={setRecipeSearch}
+              clearButtonMode="while-editing"
+            />
+
             <FlatList
               data={availableRecipes}
               keyExtractor={(item) => item.id}
+              ListHeaderComponent={
+                unassignedForSlot.length > 0 && recipeSearch.trim() === '' ? (
+                  <View style={styles.pickerSection}>
+                    <Text style={styles.pickerSectionTitle}>📥 {t('planning.unassignedTitle')}</Text>
+                    {unassignedForSlot.map((item, idx) => (
+                      <TouchableOpacity
+                        key={`${item.id}-${idx}`}
+                        style={[styles.pickerItem, styles.pickerItemUnassigned]}
+                        onPress={() => handleRecipePick(item)}
+                      >
+                        <Text style={styles.pickerItemName}>{item.name}</Text>
+                        <Text style={styles.pickerItemMeta}>
+                          {item.prepTime === 'elaborado' ? `👨‍🍳 ${t('prepTimes.elaborado')}` : `⚡ ${t('prepTimes.rapido')}`}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                    <Text style={styles.pickerSectionTitle}>🍽️ {t('planning.allRecipes')}</Text>
+                  </View>
+                ) : null
+              }
               renderItem={({ item }) => (
                 <TouchableOpacity style={styles.pickerItem} onPress={() => handleRecipePick(item)}>
                   <Text style={styles.pickerItemName}>{item.name}</Text>
@@ -579,55 +838,88 @@ export function PlanCalendarScreen() {
       </Modal>
 
       <ConfirmDialog visible={conflictDialogVisible} title={t('planning.consecutiveWarningTitle')} message={pendingAssignment ? `${pendingAssignment.conflictMessage}\n\n¿Deseas confirmar el cambio de todas formas?` : ''} onConfirm={handleConfirmConflict} onCancel={handleCancelConflict} />
-      <ConfirmDialog visible={Boolean(pendingMove)} title={pendingMove?.clearsFree ? 'Planificar en un día libre' : 'Intercambiar comidas'} message={pendingMove?.clearsFree ? 'Ese hueco estaba marcado como no necesario. Se habilitará y se moverá la comida. ¿Continuar?' : 'Ese hueco ya tiene una comida asignada. ¿Quieres intercambiarlas?'} onConfirm={confirmMove} onCancel={() => setPendingMove(null)} />
+      <ConfirmDialog visible={Boolean(pendingMove)} title={pendingMove?.clearsFree ? t('planning.planFreeDayTitle') : t('planning.swapMealsTitle')} message={pendingMove?.clearsFree ? t('planning.planFreeDayMessage') : t('planning.swapMealsMessage')} onConfirm={confirmMove} onCancel={() => setPendingMove(null)} />
+      <ConfirmDialog visible={Boolean(pendingDelete)} title={t('planning.deleteConfirmTitle')} message={t('planning.deleteConfirmMessage', { name: pendingDeleteName })} onConfirm={confirmDelete} onCancel={cancelDelete} />
+
+      <Modal visible={pdfChoiceVisible} transparent animationType="fade" onRequestClose={() => setPdfChoiceVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>{t('planning.pdfOrientationTitle')}</Text>
+            <Text style={styles.modalText}>{t('planning.pdfOrientationHint')}</Text>
+
+            <TouchableOpacity style={[styles.modalButton, styles.modalButtonPrimary]} onPress={() => { setPdfChoiceVisible(false); handleExportPdf('vertical'); }}>
+              <Text style={styles.modalButtonTextPrimary}>↕ {t('planning.pdfVertical')}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.modalButton, styles.modalButtonSecondary]} onPress={() => { setPdfChoiceVisible(false); handleExportPdf('horizontal'); }}>
+              <Text style={styles.modalButtonTextSecondary}>↔ {t('planning.pdfHorizontal')}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.modalButton, styles.modalButtonCancel]} onPress={() => setPdfChoiceVisible(false)}>
+              <Text style={styles.modalButtonTextCancel}>{t('common.cancel')}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background },
   header: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
-  headerTopRow: { marginBottom: 8 },
-  backButton: { fontSize: 15, color: '#007AFF', fontWeight: '500' },
-  title: { fontSize: 24, fontWeight: '700', color: '#1a1a1a' },
+  headerTopRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  backButton: { fontSize: 15, color: colors.accent, fontWeight: '500' },
+  exitButton: { fontSize: 15, color: colors.dangerText, fontWeight: '600' },
+  stepBadge: { fontSize: 12, fontWeight: '600', color: colors.textFaint, textTransform: 'uppercase', marginBottom: 2 },
+  title: { fontSize: 24, fontWeight: '700', color: colors.text },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
-  subtitle: { fontSize: 14, color: '#888' },
-  orientationButton: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: '#EEF5FF' },
-  orientationButtonText: { color: '#007AFF', fontSize: 12, fontWeight: '600' },
-  footer: { paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: '#eee', backgroundColor: '#fff' },
-  footerHint: { fontSize: 13, color: '#E67E22', marginBottom: 8 },
-  finishButton: { backgroundColor: '#34C759', borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
-  finishButtonText: { fontSize: 16, fontWeight: '600', color: '#fff' },
-  warningsContainer: { marginHorizontal: 16, marginBottom: 8, backgroundColor: '#fff3e0', borderRadius: 8, padding: 12 },
-  warningsTitle: { fontSize: 14, fontWeight: '600', color: '#e65100', marginBottom: 4 },
-  warningText: { fontSize: 13, color: '#bf360c', marginBottom: 2 },
-  pickerOverlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.4)', justifyContent: 'flex-end' },
-  pickerContainer: { backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '80%', paddingBottom: 24 },
-  pickerHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#eee' },
-  pickerTitle: { fontSize: 16, fontWeight: '600', color: '#333', flex: 1 },
-  pickerClose: { fontSize: 20, color: '#888', paddingLeft: 12 },
-  pickerItem: { paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#f0f0f0' },
-  removeAssignmentButton: { marginHorizontal: 12, marginTop: 12, padding: 10, borderRadius: 8, backgroundColor: '#FDECEA', alignItems: 'center' },
-  removeAssignmentText: { color: '#C0392B', fontWeight: '600' },
-  markFreeButton: { marginHorizontal: 12, marginVertical: 12, padding: 10, borderRadius: 8, backgroundColor: '#FDECEA', alignItems: 'center' },
-  markFreeText: { color: '#C0392B', fontWeight: '600' },
-  noteButton: { marginHorizontal: 12, marginTop: 12, padding: 10, borderRadius: 8, backgroundColor: '#FFF9C4', alignItems: 'center' },
-  noteButtonText: { color: '#F57F17', fontWeight: '600' },
-  noteInput: { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 12, minHeight: 120, textAlignVertical: 'top', fontSize: 15, color: '#333', marginBottom: 16 },
-  saveNoteButton: { backgroundColor: '#007AFF', padding: 14, borderRadius: 10, alignItems: 'center' },
-  saveNoteButtonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-  pickerItemName: { fontSize: 15, fontWeight: '500', color: '#1a1a1a' },
-  pickerItemMeta: { fontSize: 12, color: '#888', marginTop: 2 },
-  emptyText: { fontSize: 14, color: '#888', fontStyle: 'italic', textAlign: 'center', padding: 24 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
-  modalContent: { backgroundColor: '#fff', borderRadius: 16, padding: 24, width: '100%', maxWidth: 350, alignItems: 'center' },
-  modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#1a1a1a', marginBottom: 8 },
-  modalText: { fontSize: 15, color: '#666', marginBottom: 24, textAlign: 'center' },
+  subtitle: { fontSize: 14, color: colors.textFaint },
+  orientationButton: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: colors.accentSoft },
+  orientationButtonText: { color: colors.accent, fontSize: 12, fontWeight: '600' },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  pdfButton: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: colors.successBg },
+  pdfButtonText: { color: colors.successText, fontSize: 12, fontWeight: '600' },
+  footer: { paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.background },
+  footerHint: { fontSize: 13, color: colors.warning, marginBottom: 8 },
+  finishButton: { backgroundColor: colors.success, borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
+  finishButtonText: { fontSize: 16, fontWeight: '600', color: colors.textInverse },
+  warningsContainer: { marginHorizontal: 16, marginBottom: 8, backgroundColor: colors.warningBg, borderRadius: 8, padding: 12 },
+  warningsTitle: { fontSize: 14, fontWeight: '600', color: colors.warningText, marginBottom: 4 },
+  warningText: { fontSize: 13, color: colors.warningText, marginBottom: 2 },
+  pickerOverlay: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'flex-end' },
+  pickerContainer: { backgroundColor: colors.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '80%', paddingBottom: 24 },
+  pickerHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  pickerTitle: { fontSize: 16, fontWeight: '600', color: colors.text, flex: 1 },
+  pickerClose: { fontSize: 20, color: colors.textFaint, paddingLeft: 12 },
+  pickerItem: { paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  moveAssignmentButton: { marginHorizontal: 12, marginTop: 12, padding: 10, borderRadius: 8, backgroundColor: colors.accentSoft, alignItems: 'center' },
+  moveAssignmentText: { color: colors.accentText, fontWeight: '600' },
+  searchInput: { marginHorizontal: 12, marginTop: 12, marginBottom: 4, borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, color: colors.text },
+  pickerSection: {},
+  pickerSectionTitle: { fontSize: 12, fontWeight: '700', color: colors.textFaint, textTransform: 'uppercase', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
+  pickerItemUnassigned: { backgroundColor: colors.accentSoft },
+  removeAssignmentButton: { marginHorizontal: 12, marginTop: 12, padding: 10, borderRadius: 8, backgroundColor: colors.dangerBg, alignItems: 'center' },
+  removeAssignmentText: { color: colors.dangerText, fontWeight: '600' },
+  markFreeButton: { marginHorizontal: 12, marginVertical: 12, padding: 10, borderRadius: 8, backgroundColor: colors.dangerBg, alignItems: 'center' },
+  markFreeText: { color: colors.dangerText, fontWeight: '600' },
+  noteButton: { marginHorizontal: 12, marginTop: 12, padding: 10, borderRadius: 8, backgroundColor: colors.warningBg, alignItems: 'center' },
+  noteButtonText: { color: colors.warningText, fontWeight: '600' },
+  noteInput: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 12, minHeight: 120, textAlignVertical: 'top', fontSize: 15, color: colors.text, marginBottom: 16 },
+  saveNoteButton: { backgroundColor: colors.accent, padding: 14, borderRadius: 10, alignItems: 'center' },
+  saveNoteButtonText: { color: colors.textInverse, fontWeight: '600', fontSize: 16 },
+  pickerItemName: { fontSize: 15, fontWeight: '500', color: colors.text },
+  pickerItemMeta: { fontSize: 12, color: colors.textFaint, marginTop: 2 },
+  emptyText: { fontSize: 14, color: colors.textFaint, fontStyle: 'italic', textAlign: 'center', padding: 24 },
+  modalOverlay: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'center', alignItems: 'center', padding: 20 },
+  modalContent: { backgroundColor: colors.surface, borderRadius: 16, padding: 24, width: '100%', maxWidth: 350, alignItems: 'center' },
+  modalTitle: { fontSize: 20, fontWeight: 'bold', color: colors.text, marginBottom: 8 },
+  modalText: { fontSize: 15, color: colors.textMuted, marginBottom: 24, textAlign: 'center' },
   modalButton: { width: '100%', paddingVertical: 14, borderRadius: 10, alignItems: 'center', marginBottom: 12 },
-  modalButtonPrimary: { backgroundColor: '#007AFF' },
-  modalButtonTextPrimary: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  modalButtonSecondary: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#007AFF' },
-  modalButtonTextSecondary: { color: '#007AFF', fontSize: 16, fontWeight: '600' },
+  modalButtonPrimary: { backgroundColor: colors.accent },
+  modalButtonTextPrimary: { color: colors.textInverse, fontSize: 16, fontWeight: '600' },
+  modalButtonSecondary: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.accent },
+  modalButtonTextSecondary: { color: colors.accent, fontSize: 16, fontWeight: '600' },
   modalButtonCancel: { backgroundColor: 'transparent', marginBottom: 0 },
-  modalButtonTextCancel: { color: '#888', fontSize: 15, fontWeight: '500' }
+  modalButtonTextCancel: { color: colors.textFaint, fontSize: 15, fontWeight: '500' }
 });

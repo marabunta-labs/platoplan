@@ -5,15 +5,20 @@
  * and a secondary line showing the proportion of the purchase format.
  */
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import type { RecipeIngredient, Ingredient } from '../models/types';
 import { useI18n } from '../i18n';
+import { useTheme } from '../context/ThemeContext';
+import type { ThemeColors } from '../constants/theme';
 
 export interface IngredientRowProps {
   ingredient: RecipeIngredient;
+  /** Edit the quantity of this ingredient within the recipe. */
   onEdit?: () => void;
   onDelete?: () => void;
+  /** Edit the ingredient's master data (name, unit, purchase format, category). */
+  onEditIngredient?: () => void;
 }
 
 /**
@@ -42,23 +47,41 @@ function formatPurchaseContext(quantity: number, ingredient?: Ingredient): strin
   return `${ratio.toFixed(1)} ${description}`;
 }
 
-export const IngredientRow: React.FC<IngredientRowProps> = ({ ingredient, onEdit, onDelete }) => {
+export const IngredientRow: React.FC<IngredientRowProps> = ({ ingredient, onEdit, onDelete, onEditIngredient }) => {
   const { t } = useI18n();
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const displayName = ingredient.ingredient?.name ?? ingredient.ingredientId;
   const unit = ingredient.ingredient?.unit ? (t(`units.${ingredient.ingredient.unit}` as any) || ingredient.ingredient.unit) : '';
   const purchaseContext = formatPurchaseContext(ingredient.quantity, ingredient.ingredient);
 
+  const nameContent = (
+    <>
+      <Text style={styles.name}>{displayName}</Text>
+      <Text style={styles.quantity}>
+        {ingredient.quantity} {unit}
+      </Text>
+      {purchaseContext && (
+        <Text style={styles.purchaseContext}>{purchaseContext}</Text>
+      )}
+    </>
+  );
+
   return (
     <View style={styles.container} accessibilityRole="none" accessibilityLabel={`${displayName}`}>
-      <View style={styles.info}>
-        <Text style={styles.name}>{displayName}</Text>
-        <Text style={styles.quantity}>
-          {ingredient.quantity} {unit}
-        </Text>
-        {purchaseContext && (
-          <Text style={styles.purchaseContext}>{purchaseContext}</Text>
-        )}
-      </View>
+      {onEditIngredient ? (
+        <TouchableOpacity
+          style={styles.info}
+          onPress={onEditIngredient}
+          accessibilityRole="button"
+          accessibilityLabel={t('recipes.editIngredientData', { name: displayName })}
+        >
+          {nameContent}
+          <Text style={styles.editIngredientHint}>{t('recipes.editIngredientData', { name: '' }).trim()}</Text>
+        </TouchableOpacity>
+      ) : (
+        <View style={styles.info}>{nameContent}</View>
+      )}
       {(onEdit || onDelete) && (
         <View style={styles.actions}>
           {onEdit && (
@@ -66,9 +89,9 @@ export const IngredientRow: React.FC<IngredientRowProps> = ({ ingredient, onEdit
               onPress={onEdit}
               style={styles.actionButton}
               accessibilityRole="button"
-              accessibilityLabel={`${t('common.edit')} ${displayName}`}
+              accessibilityLabel={`${t('recipes.editQuantityAction')} ${displayName}`}
             >
-              <Text style={styles.actionText}>{t('common.edit')}</Text>
+              <Text style={styles.actionText}>{t('recipes.quantity')}</Text>
             </TouchableOpacity>
           )}
           {onDelete && (
@@ -87,7 +110,7 @@ export const IngredientRow: React.FC<IngredientRowProps> = ({ ingredient, onEdit
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -95,7 +118,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: colors.border,
   },
   info: {
     flex: 1,
@@ -103,18 +126,23 @@ const styles = StyleSheet.create({
   name: {
     fontSize: 15,
     fontWeight: '500',
-    color: '#1a1a1a',
+    color: colors.text,
   },
   quantity: {
     fontSize: 13,
-    color: '#666',
+    color: colors.textMuted,
     marginTop: 2,
   },
   purchaseContext: {
     fontSize: 12,
-    color: '#999',
+    color: colors.textFaint,
     fontStyle: 'italic',
     marginTop: 2,
+  },
+  editIngredientHint: {
+    fontSize: 11,
+    color: colors.accent,
+    marginTop: 3,
   },
   actions: {
     flexDirection: 'row',
@@ -124,16 +152,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 4,
-    backgroundColor: '#f0f0f0',
+    backgroundColor: colors.card,
   },
   deleteButton: {
-    backgroundColor: '#fee',
+    backgroundColor: colors.dangerBg,
   },
   actionText: {
     fontSize: 13,
-    color: '#333',
+    color: colors.text,
   },
   deleteText: {
-    color: '#c00',
+    color: colors.danger,
   },
 });

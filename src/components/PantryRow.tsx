@@ -1,7 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { View, Text, TouchableOpacity, TextInput, StyleSheet } from 'react-native';
 import type { PantryEntry } from '../models/types';
 import { categoryPresentation } from '../constants/ingredient-categories';
+import { useTheme } from '../context/ThemeContext';
+import type { ThemeColors } from '../constants/theme';
 
 export interface PantryRowProps {
   entry: PantryEntry;
@@ -12,6 +14,8 @@ export interface PantryRowProps {
 }
 
 export const PantryRow: React.FC<PantryRowProps> = ({ entry, onQuantityChange, dimmed = false, onEdit }) => {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const displayName = entry.ingredient?.name ?? entry.ingredientId;
   const unit = entry.ingredient?.unit ?? '';
   const categories = entry.ingredient?.categories ?? (entry.ingredient?.category ? [entry.ingredient.category] : []);
@@ -67,7 +71,7 @@ export const PantryRow: React.FC<PantryRowProps> = ({ entry, onQuantityChange, d
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -75,26 +79,26 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: colors.border,
   },
   info: {
     flex: 1,
   },
   containerDimmed: {
-    backgroundColor: '#fafafa',
+    backgroundColor: colors.card,
   },
   name: {
     fontSize: 15,
     fontWeight: '500',
-    color: '#1a1a1a',
+    color: colors.text,
   },
   nameDimmed: {
-    color: '#999',
+    color: colors.textFaint,
     fontWeight: '400',
   },
   unit: {
     fontSize: 12,
-    color: '#888',
+    color: colors.textFaint,
     marginTop: 2,
   },
   quantityControl: {
@@ -106,19 +110,19 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#f0f0f0',
+    backgroundColor: colors.card,
     alignItems: 'center',
     justifyContent: 'center',
   },
   quantityButtonText: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#333',
+    color: colors.text,
   },
   quantityValue: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#1a1a1a',
+    color: colors.text,
     minWidth: 30,
     padding: 0,
     textAlign: 'center',

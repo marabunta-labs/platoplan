@@ -8,6 +8,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { initializeDatabase } from '../database/database';
+import { seedSampleDataIfEmpty } from '../database/seed';
 
 interface DatabaseContextValue {
   db: SQLiteDatabase;
@@ -34,6 +35,15 @@ export function DatabaseProvider({ children }: DatabaseProviderProps) {
     async function init() {
       try {
         const database = await initializeDatabase();
+        // Seed realistic sample data ONLY in development (never in production
+        // builds). No-op once data exists. Best-effort: never block app start.
+        if (__DEV__) {
+          try {
+            await seedSampleDataIfEmpty(database);
+          } catch (seedError) {
+            console.warn('Sample data seeding skipped:', seedError);
+          }
+        }
         if (!cancelled) {
           setDb(database);
         }

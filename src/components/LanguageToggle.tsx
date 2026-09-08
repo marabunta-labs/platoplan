@@ -5,12 +5,16 @@
  * Designed to sit in the navigation header alongside SyncStatusIndicator.
  */
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useI18n } from '../i18n';
+import { useTheme } from '../context/ThemeContext';
+import type { ThemeColors } from '../constants/theme';
 
 export function LanguageToggle() {
   const { locale, setLocale } = useI18n();
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
 
   return (
     <View style={styles.container} accessibilityRole="radiogroup" accessibilityLabel="Language selector">
@@ -37,7 +41,7 @@ export function LanguageToggle() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -49,19 +53,19 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   optionActive: {
-    backgroundColor: '#007AFF',
+    backgroundColor: colors.accent,
   },
   optionText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#888',
+    color: colors.textFaint,
   },
   optionTextActive: {
-    color: '#fff',
+    color: colors.textInverse,
   },
   separator: {
     fontSize: 12,
-    color: '#ccc',
+    color: colors.border,
     marginHorizontal: 2,
   },
 });

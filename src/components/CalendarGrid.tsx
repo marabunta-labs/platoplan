@@ -3,6 +3,8 @@ import { View, Text, Pressable, ScrollView, StyleSheet, Platform, TouchableOpaci
 import type { MenuPlan, Recipe } from '../models/types';
 import type { MealSlot } from '../models/enums';
 import { useI18n } from '../i18n';
+import { useTheme } from '../context/ThemeContext';
+import type { ThemeColors } from '../constants/theme';
 
 export interface SlotRef {
   day: number;
@@ -14,12 +16,13 @@ export interface CalendarGridProps {
   onSlotPress: (day: number, slot: MealSlot) => void;
   onDayNotePress?: (dayIndex: number) => void;
   recipes?: Recipe[];
-  draggingSlot?: SlotRef | { isUnassigned: true; recipeId: string } | null;
+  draggingSlot?: SlotRef | { isUnassigned: true; recipeId: string; index: number } | null;
   onMove?: (from: SlotRef, to: SlotRef) => void;
   unassignedRecipes?: Recipe[];
   onMoveToUnassigned?: (from: SlotRef) => void;
-  onMoveFromUnassigned?: (recipeId: string, to: SlotRef) => void;
-  onPickUp?: (slot: SlotRef | { isUnassigned: true; recipeId: string }) => void;
+  onMoveFromUnassigned?: (recipeId: string, to: SlotRef, index?: number) => void;
+  onDeleteDragged?: (target: SlotRef | { isUnassigned: true; recipeId: string; index: number }) => void;
+  onPickUp?: (slot: SlotRef | { isUnassigned: true; recipeId: string; index: number }) => void;
   onCancelPickUp?: () => void;
   orientation?: 'vertical' | 'horizontal';
 }
@@ -67,6 +70,8 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
   orientation = 'vertical',
 }) => {
   const { t } = useI18n();
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const isHorizontal = orientation === 'horizontal';
 
   const startDate = useMemo(
@@ -204,13 +209,13 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   wrapper: { flex: 1 },
   container: { flex: 1 },
   content: { paddingHorizontal: 12, paddingBottom: 24 },
   contentHorizontal: { flexDirection: 'row', paddingRight: 24 },
-  moveHint: { backgroundColor: '#E3F2FD', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, marginHorizontal: 12, marginBottom: 8 },
-  moveHintText: { fontSize: 13, color: '#1565C0' },
+  moveHint: { backgroundColor: colors.accentSoft, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, marginHorizontal: 12, marginBottom: 8 },
+  moveHintText: { fontSize: 13, color: colors.accentText },
   
   dayWrapper: { marginBottom: 8 },
   dayWrapperHorizontal: { width: 140, marginRight: 12, marginBottom: 0 },
@@ -218,35 +223,35 @@ const styles = StyleSheet.create({
   dayRow: { flexDirection: 'row', alignItems: 'stretch' },
   dayRowHorizontal: { flexDirection: 'column' },
   
-  dateColumn: { width: 52, alignItems: 'center', justifyContent: 'center', paddingVertical: 4, backgroundColor: '#FAF9F6', borderRadius: 8, marginRight: 6, borderWidth: 1, borderColor: '#EFECE6' },
+  dateColumn: { width: 52, alignItems: 'center', justifyContent: 'center', paddingVertical: 4, backgroundColor: colors.card, borderRadius: 8, marginRight: 6, borderWidth: 1, borderColor: colors.border },
   dateColumnHorizontal: { width: '100%', marginRight: 0, marginBottom: 8, paddingVertical: 8, flexDirection: 'row', gap: 6 },
   
-  weekday: { fontSize: 11, color: '#888', textTransform: 'uppercase' },
-  dayNumber: { fontSize: 18, fontWeight: '700', color: '#1a1a1a', lineHeight: 22 },
-  month: { fontSize: 10, color: '#aaa' },
-  weekendText: { color: '#007AFF' },
+  weekday: { fontSize: 11, color: colors.textFaint, textTransform: 'uppercase' },
+  dayNumber: { fontSize: 18, fontWeight: '700', color: colors.text, lineHeight: 22 },
+  month: { fontSize: 10, color: colors.textFaint },
+  weekendText: { color: colors.accent },
   
   noteBadge: { marginTop: 2, paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4 },
-  noteBadgeActive: { backgroundColor: '#FFF59D' },
+  noteBadgeActive: { backgroundColor: colors.warningBg },
   noteBadgeText: { fontSize: 10 },
   
   slotsColumn: { flex: 1, flexDirection: 'row', gap: 6 },
   slotsColumnHorizontal: { flexDirection: 'column' },
   
-  slotCard: { flex: 1, minHeight: 58, justifyContent: 'center', backgroundColor: '#f5f7fa', borderRadius: 8, borderWidth: 1, borderColor: '#e6e9ee', paddingHorizontal: 10, paddingVertical: 6 },
+  slotCard: { flex: 1, minHeight: 58, justifyContent: 'center', backgroundColor: colors.card, borderRadius: 8, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 10, paddingVertical: 6 },
   slotHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   mealNoteIcon: { fontSize: 10 },
-  slotCardFree: { backgroundColor: '#FDECEA', borderColor: '#F5B7B1' },
-  slotCardEmpty: { borderStyle: 'dashed', borderColor: '#c9ced6', backgroundColor: '#fff' },
-  slotCardDragging: { borderColor: '#007AFF', borderWidth: 2, backgroundColor: '#E3F2FD' },
-  slotLabel: { fontSize: 10, fontWeight: '600', color: '#8a94a6', textTransform: 'uppercase', marginBottom: 2 },
-  slotLabelFree: { color: '#C0392B' },
-  slotValue: { fontSize: 13, color: '#1a1a1a' },
-  slotValueFree: { color: '#C0392B', fontWeight: '600', textDecorationLine: 'line-through' },
-  slotValueEmpty: { color: '#aab0b8', fontStyle: 'italic' },
-  mealNoteText: { fontSize: 11, color: '#B7950B', fontStyle: 'italic', marginTop: 2 },
+  slotCardFree: { backgroundColor: colors.dangerBg, borderColor: colors.danger },
+  slotCardEmpty: { borderStyle: 'dashed', borderColor: colors.border, backgroundColor: colors.surface },
+  slotCardDragging: { borderColor: colors.accent, borderWidth: 2, backgroundColor: colors.accentSoft },
+  slotLabel: { fontSize: 10, fontWeight: '600', color: colors.textFaint, textTransform: 'uppercase', marginBottom: 2 },
+  slotLabelFree: { color: colors.dangerText },
+  slotValue: { fontSize: 13, color: colors.text },
+  slotValueFree: { color: colors.dangerText, fontWeight: '600', textDecorationLine: 'line-through' },
+  slotValueEmpty: { color: colors.textFaint, fontStyle: 'italic' },
+  mealNoteText: { fontSize: 11, color: colors.warning, fontStyle: 'italic', marginTop: 2 },
   
-  dayNoteFull: { marginLeft: 58, backgroundColor: '#FFF9C4', padding: 8, borderRadius: 6, marginTop: 4 },
+  dayNoteFull: { marginLeft: 58, backgroundColor: colors.warningBg, padding: 8, borderRadius: 6, marginTop: 4 },
   dayNoteFullHorizontal: { marginLeft: 0 },
-  dayNoteFullText: { fontSize: 13, color: '#F57F17', fontWeight: '500' }
+  dayNoteFullText: { fontSize: 13, color: colors.warningText, fontWeight: '500' }
 });

@@ -3,8 +3,10 @@
  * Numeric input with −/+ buttons and a free-text field, clamped to [min, max].
  */
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import { useTheme } from '../context/ThemeContext';
+import type { ThemeColors } from '../constants/theme';
 
 export interface StepperProps {
   value: number;
@@ -25,6 +27,9 @@ export function Stepper({
   label,
   testID,
 }: StepperProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+
   const clamp = useCallback(
     (n: number) => Math.max(min, Math.min(max, n)),
     [min, max]
@@ -79,15 +84,15 @@ export function Stepper({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: colors.border,
     borderRadius: 10,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: colors.card,
     overflow: 'hidden',
   },
   button: {
@@ -103,10 +108,10 @@ const styles = StyleSheet.create({
     fontSize: 24,
     lineHeight: 28,
     fontWeight: '600',
-    color: '#007AFF',
+    color: colors.accent,
   },
   buttonTextDisabled: {
-    color: '#999',
+    color: colors.textFaint,
   },
   input: {
     minWidth: 56,
@@ -114,11 +119,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 18,
     fontWeight: '600',
-    color: '#1a1a1a',
-    backgroundColor: '#fff',
+    color: colors.text,
+    backgroundColor: colors.inputBg,
     borderLeftWidth: 1,
     borderRightWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: colors.border,
     paddingHorizontal: 8,
   },
 });

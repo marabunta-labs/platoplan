@@ -13,12 +13,16 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { ShoppingStackParamList } from '../../navigation/types';
 import { useRecipes, useShoppingList } from '../../hooks';
 import { useI18n } from '../../i18n';
+import { useTheme } from '../../context/ThemeContext';
+import type { ThemeColors } from '../../constants/theme';
 
 type NavigationProp = NativeStackNavigationProp<ShoppingStackParamList, 'CustomListBuilder'>;
 
 export function CustomListBuilderScreen() {
   const navigation = useNavigation<NavigationProp>();
   const { t, locale } = useI18n();
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const { recipes, loading: recipesLoading } = useRecipes();
   
   // NUEVO: Traemos la función y el estado de carga de la lista de la compra
@@ -74,7 +78,7 @@ export function CustomListBuilderScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.centered}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color={colors.accent} />
         </View>
       </SafeAreaView>
     );
@@ -87,10 +91,10 @@ export function CustomListBuilderScreen() {
           onPress={() => navigation.goBack()}
           style={styles.backButton}
         >
-          <Text style={styles.backButtonText}>← Volver</Text>
+          <Text style={styles.backButtonText}>{t('common.back')}</Text>
         </TouchableOpacity>
-        <Text style={styles.title}>Lista a medida</Text>
-        <Text style={styles.subtitle}>Añade las recetas que quieras comprar</Text>
+        <Text style={styles.title}>{t('shopping.customList')}</Text>
+        <Text style={styles.subtitle}>{t('shopping.customListSubtitle')}</Text>
       </View>
 
       <FlatList
@@ -104,7 +108,7 @@ export function CustomListBuilderScreen() {
               <View style={styles.recipeInfo}>
                 <Text style={styles.recipeName}>{item.name}</Text>
                 <Text style={styles.recipeMeta}>
-                  {item.prepTime === 'elaborado' ? '👨‍🍳 Elaborado' : '⚡ Rápido'} · {item.mealType}
+                  {item.prepTime === 'elaborado' ? `👨‍🍳 ${t('prepTimes.elaborado')}` : `⚡ ${t('prepTimes.rapido')}`} · {t(`mealTypes.${item.mealType}` as any)}
                 </Text>
               </View>
               
@@ -136,7 +140,7 @@ export function CustomListBuilderScreen() {
         }}
         ListEmptyComponent={
           <View style={styles.centered}>
-            <Text style={styles.emptyText}>No tienes recetas guardadas.</Text>
+            <Text style={styles.emptyText}>{t('shopping.noSavedRecipes')}</Text>
           </View>
         }
       />
@@ -149,10 +153,10 @@ export function CustomListBuilderScreen() {
             disabled={generatingList}
           >
             {generatingList ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={colors.textInverse} />
             ) : (
               <Text style={styles.generateButtonText}>
-                Generar Lista ({totalSelectedCount} recetas)
+                {t('shopping.generateList', { count: totalSelectedCount })}
               </Text>
             )}
           </TouchableOpacity>
@@ -162,10 +166,10 @@ export function CustomListBuilderScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: colors.background,
   },
   centered: {
     flex: 1,
@@ -177,25 +181,25 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: colors.border,
   },
   backButton: {
     marginBottom: 12,
   },
   backButtonText: {
-    color: '#007AFF',
+    color: colors.accent,
     fontSize: 16,
     fontWeight: '500',
   },
   title: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#1a1a1a',
+    color: colors.text,
     marginBottom: 4,
   },
   subtitle: {
     fontSize: 14,
-    color: '#666',
+    color: colors.textMuted,
   },
   listContent: {
     padding: 16,
@@ -207,15 +211,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 14,
     paddingHorizontal: 16,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: colors.card,
     borderRadius: 12,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#eee',
+    borderColor: colors.border,
   },
   recipeCardSelected: {
-    backgroundColor: '#F0F8FF',
-    borderColor: '#B3D4FF',
+    backgroundColor: colors.accentSoft,
+    borderColor: colors.accent,
   },
   recipeInfo: {
     flex: 1,
@@ -224,12 +228,12 @@ const styles = StyleSheet.create({
   recipeName: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#1a1a1a',
+    color: colors.text,
     marginBottom: 4,
   },
   recipeMeta: {
     fontSize: 13,
-    color: '#888',
+    color: colors.textFaint,
     textTransform: 'capitalize',
   },
   quantityControl: {
@@ -241,33 +245,33 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#fff',
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#ccc',
+    borderColor: colors.borderStrong,
     justifyContent: 'center',
     alignItems: 'center',
   },
   circleButtonAdd: {
-    backgroundColor: '#007AFF',
-    borderColor: '#007AFF',
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
   },
   circleButtonText: {
     fontSize: 18,
-    color: '#555',
+    color: colors.textMuted,
     lineHeight: 20,
   },
   circleButtonTextAdd: {
-    color: '#fff',
+    color: colors.textInverse,
   },
   quantityText: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#1a1a1a',
+    color: colors.text,
     minWidth: 20,
     textAlign: 'center',
   },
   emptyText: {
-    color: '#888',
+    color: colors.textFaint,
     fontSize: 15,
   },
   footer: {
@@ -276,12 +280,12 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     padding: 16,
-    backgroundColor: '#fff',
+    backgroundColor: colors.surface,
     borderTopWidth: 1,
-    borderTopColor: '#eee',
+    borderTopColor: colors.border,
   },
   generateButton: {
-    backgroundColor: '#34C759',
+    backgroundColor: colors.success,
     borderRadius: 10,
     paddingVertical: 14,
     alignItems: 'center',
@@ -289,10 +293,10 @@ const styles = StyleSheet.create({
     minHeight: 50,
   },
   generateButtonDisabled: {
-    backgroundColor: '#98DFAC',
+    backgroundColor: colors.success,
   },
   generateButtonText: {
-    color: '#fff',
+    color: colors.textInverse,
     fontSize: 16,
     fontWeight: '700',
   },

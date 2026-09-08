@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "platoplan",
+    "name": "PlatoPlan",
     "slug": "platoplan",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true
     },
@@ -20,7 +20,14 @@
     },
     "web": {
       "favicon": "./assets/favicon.png",
-      "bundler": "metro"
+      "bundler": "metro",
+      "output": "single",
+      "name": "PlatoPlan",
+      "shortName": "PlatoPlan",
+      "description": "Planificador de menús semanal: organiza comidas, gestiona tu despensa y genera la lista de la compra.",
+      "themeColor": "#007AFF",
+      "backgroundColor": "#FFFFFF",
+      "lang": "es"
     },
     "plugins": [
       "expo-sqlite"

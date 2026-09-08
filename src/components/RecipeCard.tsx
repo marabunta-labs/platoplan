@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import type { Recipe } from '../models/types';
 import { useI18n } from '../i18n';
+import { useTheme } from '../context/ThemeContext';
+import type { ThemeColors } from '../constants/theme';
 
 export interface RecipeCardProps {
   recipe: Recipe;
@@ -10,6 +12,8 @@ export interface RecipeCardProps {
 
 export const RecipeCard: React.FC<RecipeCardProps> = ({ recipe, onPress }) => {
   const { t } = useI18n();
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
 
   return (
     <TouchableOpacity
@@ -31,14 +35,14 @@ export const RecipeCard: React.FC<RecipeCardProps> = ({ recipe, onPress }) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
-    backgroundColor: '#fff',
+    backgroundColor: colors.card,
     borderRadius: 8,
     padding: 16,
     marginVertical: 6,
     marginHorizontal: 12,
-    shadowColor: '#000',
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
@@ -47,7 +51,7 @@ const styles = StyleSheet.create({
   name: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#1a1a1a',
+    color: colors.text,
     marginBottom: 8,
   },
   details: {
@@ -56,8 +60,8 @@ const styles = StyleSheet.create({
   },
   badge: {
     fontSize: 12,
-    color: '#555',
-    backgroundColor: '#f0f0f0',
+    color: colors.textMuted,
+    backgroundColor: colors.surface,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 4,

@@ -16,6 +16,9 @@ export type { CalendarPickerProps } from './CalendarPicker';
 export { ShoppingItem } from './ShoppingItem';
 export type { ShoppingItemProps } from './ShoppingItem';
 
+export { SortControl } from './SortControl';
+export type { SortControlProps, SortField, SortDirection } from './SortControl';
+
 export { SearchBar } from './SearchBar';
 export type { SearchBarProps } from './SearchBar';
 
@@ -45,4 +48,9 @@ export type { SyncStatusIndicatorProps } from './SyncStatusIndicator';
 export { LanguageToggle } from './LanguageToggle';
 
 export { GuestBanner } from './GuestBanner';
+
+export { TermsModal } from './TermsModal';
+export type { TermsModalProps } from './TermsModal';
+
+export { AlertHost } from './AlertHost';
 

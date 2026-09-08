@@ -14,88 +14,94 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // --- Alert Compatibility Tests (web variant doesn't import react-native) ---
 
 describe('AlertCompat (web)', () => {
-  let originalAlert: typeof globalThis.alert;
-  let originalConfirm: typeof globalThis.confirm;
+  // The web AlertCompat now renders in-app FLOATING dialogs (via the alert
+  // store + AlertHost) instead of window.alert/window.confirm, so every message
+  // shares the same floating style. We assert the enqueued request here.
+  let received: any[] = [];
+  let unsubscribe: () => void;
 
-  beforeEach(() => {
-    // Mock browser globals
-    originalAlert = globalThis.alert;
-    originalConfirm = globalThis.confirm;
-    globalThis.alert = vi.fn();
-    globalThis.confirm = vi.fn(() => true);
+  beforeEach(async () => {
+    received = [];
+    const store = await import('./alertStore.web');
+    unsubscribe = store.subscribeToAlerts((req) => received.push(req));
   });
 
   afterEach(() => {
-    globalThis.alert = originalAlert;
-    globalThis.confirm = originalConfirm;
+    unsubscribe?.();
   });
 
-  it('should call window.alert for single-button alerts', async () => {
-    const { AlertCompat } = await import('../utils/alert.web');
+  it('should NOT use window.alert/confirm (floating in-app dialog instead)', async () => {
+    const alertSpy = vi.fn();
+    const confirmSpy = vi.fn(() => true);
+    const origAlert = globalThis.alert;
+    const origConfirm = globalThis.confirm;
+    globalThis.alert = alertSpy;
+    globalThis.confirm = confirmSpy;
 
+    const { AlertCompat } = await import('../utils/alert.web');
     AlertCompat.alert('Error', 'Something went wrong');
 
-    expect(globalThis.alert).toHaveBeenCalledWith('Error\n\nSomething went wrong');
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    globalThis.alert = origAlert;
+    globalThis.confirm = origConfirm;
   });
 
-  it('should call window.alert with title only when no message', async () => {
+  it('should enqueue an alert with title and message', async () => {
     const { AlertCompat } = await import('../utils/alert.web');
+    AlertCompat.alert('Error', 'Something went wrong');
 
+    const req = received[received.length - 1];
+    expect(req.title).toBe('Error');
+    expect(req.message).toBe('Something went wrong');
+  });
+
+  it('should default to a single OK button when none provided', async () => {
+    const { AlertCompat } = await import('../utils/alert.web');
     AlertCompat.alert('Info');
 
-    expect(globalThis.alert).toHaveBeenCalledWith('Info');
+    const req = received[received.length - 1];
+    expect(req.title).toBe('Info');
+    expect(req.buttons).toHaveLength(1);
   });
 
-  it('should call window.confirm for two-button alerts', async () => {
+  it('should keep the provided two buttons for confirmation alerts', async () => {
     const { AlertCompat } = await import('../utils/alert.web');
     const onConfirm = vi.fn();
     const onCancel = vi.fn();
-
-    (globalThis.confirm as ReturnType<typeof vi.fn>).mockReturnValue(true);
 
     AlertCompat.alert('Confirm', 'Are you sure?', [
       { text: 'Cancel', onPress: onCancel, style: 'cancel' },
       { text: 'OK', onPress: onConfirm },
     ]);
 
-    expect(globalThis.confirm).toHaveBeenCalledWith('Confirm\n\nAre you sure?');
+    const req = received[received.length - 1];
+    expect(req.buttons).toHaveLength(2);
+    expect(req.buttons[0].style).toBe('cancel');
+    // Pressing a button triggers its handler (as the host would on dismiss).
+    req.buttons[1].onPress();
     expect(onConfirm).toHaveBeenCalled();
     expect(onCancel).not.toHaveBeenCalled();
   });
 
-  it('should call cancel handler when confirm returns false', async () => {
+  it('should treat an empty buttons array as a default OK alert', async () => {
     const { AlertCompat } = await import('../utils/alert.web');
-    const onConfirm = vi.fn();
-    const onCancel = vi.fn();
-
-    (globalThis.confirm as ReturnType<typeof vi.fn>).mockReturnValue(false);
-
-    AlertCompat.alert('Confirm', 'Are you sure?', [
-      { text: 'Cancel', onPress: onCancel, style: 'cancel' },
-      { text: 'OK', onPress: onConfirm },
-    ]);
-
-    expect(onCancel).toHaveBeenCalled();
-    expect(onConfirm).not.toHaveBeenCalled();
-  });
-
-  it('should handle empty buttons array like an alert', async () => {
-    const { AlertCompat } = await import('../utils/alert.web');
-
     AlertCompat.alert('Title', 'Message', []);
 
-    expect(globalThis.alert).toHaveBeenCalledWith('Title\n\nMessage');
+    const req = received[received.length - 1];
+    expect(req.buttons).toHaveLength(1);
   });
 
-  it('should handle single button with onPress callback', async () => {
+  it('should preserve a single button with onPress callback', async () => {
     const { AlertCompat } = await import('../utils/alert.web');
     const onPress = vi.fn();
 
-    AlertCompat.alert('Done', 'Success', [
-      { text: 'OK', onPress },
-    ]);
+    AlertCompat.alert('Done', 'Success', [{ text: 'OK', onPress }]);
 
-    expect(globalThis.alert).toHaveBeenCalledWith('Done\n\nSuccess');
+    const req = received[received.length - 1];
+    expect(req.buttons).toHaveLength(1);
+    req.buttons[0].onPress();
     expect(onPress).toHaveBeenCalled();
   });
 });

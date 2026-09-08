@@ -23,11 +23,15 @@ import type { PantryStackParamList, MainTabParamList, RecipeStackParamList } fro
 import { usePantry, useRecipes } from '../../hooks';
 import { useI18n } from '../../i18n';
 import { getSuggestedRecipes, type SuggestedRecipe } from '../../services/pantry-suggestions.service';
+import { useTheme } from '../../context/ThemeContext';
+import type { ThemeColors } from '../../constants/theme';
 
 type NavigationProp = NativeStackNavigationProp<PantryStackParamList, 'SuggestedRecipes'>;
 
 export function SuggestedRecipesScreen() {
   const { t } = useI18n();
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const navigation = useNavigation<NavigationProp>();
   const { pantryEntries, loading: pantryLoading } = usePantry();
   const { recipes, loading: recipesLoading } = useRecipes();
@@ -99,7 +103,7 @@ export function SuggestedRecipesScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color={colors.accent} />
           <Text style={styles.loadingText}>{t('pantry.analyzing')}</Text>
         </View>
       </SafeAreaView>
@@ -160,26 +164,26 @@ export function SuggestedRecipesScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: colors.background,
   },
   header: {
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: colors.border,
   },
   backButton: {
     fontSize: 15,
-    color: '#007AFF',
+    color: colors.accent,
     marginBottom: 8,
   },
   title: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#1a1a1a',
+    color: colors.text,
   },
   loadingContainer: {
     flex: 1,
@@ -189,7 +193,7 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 14,
-    color: '#666',
+    color: colors.textMuted,
   },
   emptyContainer: {
     flex: 1,
@@ -199,13 +203,13 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 16,
-    color: '#555',
+    color: colors.textMuted,
     textAlign: 'center',
     marginBottom: 8,
   },
   emptyHint: {
     fontSize: 14,
-    color: '#888',
+    color: colors.textFaint,
     textAlign: 'center',
   },
   listContent: {
@@ -214,14 +218,14 @@ const styles = StyleSheet.create({
   sectionHeader: {
     paddingHorizontal: 16,
     paddingVertical: 10,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: colors.card,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: colors.border,
   },
   sectionHeaderText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#444',
+    color: colors.textMuted,
     textTransform: 'uppercase',
     letterSpacing: 0.3,
   },
@@ -229,10 +233,10 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginTop: 10,
     padding: 14,
-    backgroundColor: '#fafafa',
+    backgroundColor: colors.card,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#eee',
+    borderColor: colors.border,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -242,7 +246,7 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#1a1a1a',
+    color: colors.text,
     flex: 1,
     marginRight: 8,
   },
@@ -256,37 +260,37 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   badgeElaborate: {
-    backgroundColor: '#FFF3E0',
+    backgroundColor: colors.warningBg,
   },
   badgeQuick: {
-    backgroundColor: '#E8F5E9',
+    backgroundColor: colors.successBg,
   },
   badgeFull: {
-    backgroundColor: '#C8E6C9',
+    backgroundColor: colors.successBg,
   },
   badgePartial: {
-    backgroundColor: '#FFF9C4',
+    backgroundColor: colors.warningBg,
   },
   badgeText: {
     fontSize: 11,
     fontWeight: '500',
-    color: '#555',
+    color: colors.textMuted,
   },
   missingSection: {
     marginTop: 8,
     paddingTop: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#ddd',
+    borderTopColor: colors.border,
   },
   missingTitle: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#E65100',
+    color: colors.warningText,
     marginBottom: 2,
   },
   missingItem: {
     fontSize: 12,
-    color: '#888',
+    color: colors.textFaint,
     paddingLeft: 4,
     marginBottom: 1,
   },

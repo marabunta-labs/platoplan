@@ -88,44 +88,56 @@ function ShoppingStackNavigator() {
   );
 }
 
+import { Text } from 'react-native';
 import { useI18n } from '../i18n';
+import { useTheme } from '../context/ThemeContext';
 
 // --- Drawer navigator ---
 
 const Drawer = createDrawerNavigator<MainTabParamList>();
 
+/** Renders a drawer item icon as an emoji. */
+const drawerEmoji = (emoji: string) => () => <Text style={{ fontSize: 18 }}>{emoji}</Text>;
+
 export function SidebarNavigator() {
   const { t } = useI18n();
+  const { colors } = useTheme();
 
   return (
     <Drawer.Navigator
       screenOptions={{
         headerShown: false,
         drawerType: 'permanent',
+        // Reset a section's nested stack to its first screen when leaving it.
+        popToTopOnBlur: true,
+        drawerActiveTintColor: colors.navActive,
+        drawerInactiveTintColor: colors.navInactive,
         drawerStyle: {
           width: 240,
+          backgroundColor: colors.surface,
+          borderRightColor: colors.border,
         },
       }}
     >
       <Drawer.Screen
         name="RecipesTab"
         component={RecipeStackNavigator}
-        options={{ drawerLabel: t('navigation.recipes') }}
+        options={{ drawerLabel: t('navigation.recipes'), drawerIcon: drawerEmoji('📖') }}
       />
       <Drawer.Screen
         name="PantryTab"
         component={PantryStackNavigator}
-        options={{ drawerLabel: t('navigation.pantry') }}
+        options={{ drawerLabel: t('navigation.pantry'), drawerIcon: drawerEmoji('🥫') }}
       />
       <Drawer.Screen
         name="PlanningTab"
         component={PlanningStackNavigator}
-        options={{ drawerLabel: t('navigation.planning') }}
+        options={{ drawerLabel: t('navigation.planning'), drawerIcon: drawerEmoji('🗓️') }}
       />
       <Drawer.Screen
         name="ShoppingTab"
         component={ShoppingStackNavigator}
-        options={{ drawerLabel: t('navigation.shopping') }}
+        options={{ drawerLabel: t('navigation.shopping'), drawerIcon: drawerEmoji('🛒') }}
       />
     </Drawer.Navigator>
   );

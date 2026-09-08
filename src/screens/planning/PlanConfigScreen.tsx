@@ -26,6 +26,9 @@ import type { FreeDayType } from '../../models/enums';
 import { usePlanning } from '../../hooks';
 import { CalendarPicker, Stepper } from '../../components';
 import { useI18n } from '../../i18n';
+import { useTheme } from '../../context/ThemeContext';
+import type { ThemeColors } from '../../constants/theme';
+import { confirmLeavePlan } from './confirmLeavePlan';
 
 type NavigationProp = NativeStackNavigationProp<PlanningStackParamList, 'PlanConfig'>;
 type ScreenRouteProp = RouteProp<PlanningStackParamList, 'PlanConfig'>;
@@ -79,6 +82,8 @@ function daysBetween(start: Date, end: Date): number {
 // --- Main component ---
 export function PlanConfigScreen() {
   const { t } = useI18n();
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<ScreenRouteProp>();
   
@@ -201,7 +206,7 @@ export function PlanConfigScreen() {
     const requiredDinners = periodDays - dinnerFreeDays;
 
     if (requiredLunches <= 0 && requiredDinners <= 0) {
-      AlertCompat.alert(t('common.error'), 'Todos los días están marcados como libres. Reduce los días libres para planificar.');
+      AlertCompat.alert(t('common.error'), t('planning.allFreeError'));
       return;
     }
 
@@ -255,6 +260,10 @@ export function PlanConfigScreen() {
     t('planning.stepElaborateDays'),
     t('planning.stepSummary'),
   ];
+  // Choosing recipes (step 6) and arranging them by day (step 7) happen on the
+  // next screens; we show them as the final (non-navigable here) steps so the
+  // wizard numbering stays consistent across the whole flow (X de 7).
+  const DISPLAY_STEPS = [...STEPS, t('planning.stepRecipes'), t('planning.stepDistribute')];
 
   const dayIndices = useMemo(() => startDate && periodDays >= 1 && periodDays <= 30 ? Array.from({ length: periodDays }, (_, i) => i) : [], [startDate, periodDays]);
   
@@ -264,19 +273,11 @@ export function PlanConfigScreen() {
   const isLastStep = step === STEPS.length - 1;
   const canAdvance = step === 0 ? isFormValid : true;
 
-  const handleBack = () => {
-    if (step === 0) {
-      navigation.goBack();
-      return;
-    }
-    setStep((s) => s - 1);
-  };
-
   if (isInitializing) {
     return (
       <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-        <ActivityIndicator size="large" color="#007AFF" />
-        <Text style={{ marginTop: 16, color: '#666' }}>Cargando datos del menú...</Text>
+        <ActivityIndicator size="large" color={colors.accent} />
+        <Text style={{ marginTop: 16, color: colors.textMuted }}>{t('planning.loadingPlan')}</Text>
       </View>
     );
   }
@@ -284,44 +285,44 @@ export function PlanConfigScreen() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={handleBack} accessibilityRole="button">
-          <Text style={styles.backButton}>{t('common.back')}</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>{isEditing ? 'Editar Menú' : t('planning.configTitle')}</Text>
+        <Text style={styles.headerTitle}>{isEditing ? t('planning.editMenu') : t('planning.configTitle')}</Text>
         <View style={{ flex: 1 }} />
-        <TouchableOpacity onPress={() => navigation.navigate('PlanHistory' as any)} accessibilityRole="button">
-          <Text style={{ fontSize: 15, color: '#C0392B', fontWeight: '600' }}>Salir</Text>
+        <TouchableOpacity
+          onPress={() => confirmLeavePlan(t, () => navigation.navigate('PlanHistory' as any))}
+          accessibilityRole="button"
+        >
+          <Text style={styles.exitButton}>{t('planning.exit')}</Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.stepper}>
-        {STEPS.map((label, index) => (
+        {DISPLAY_STEPS.map((label, index) => (
           <View key={label} style={styles.stepperItem}>
             <View style={[styles.stepperDot, index === step && styles.stepperDotActive, index < step && styles.stepperDotDone]}>
               <Text style={[styles.stepperDotText, (index === step || index < step) && styles.stepperDotTextActive]}>{index + 1}</Text>
             </View>
-            {index < STEPS.length - 1 && <View style={styles.stepperLine} />}
+            {index < DISPLAY_STEPS.length - 1 && <View style={styles.stepperLine} />}
           </View>
         ))}
       </View>
-      <Text style={styles.stepTitle}>{t('planning.stepCounter', { current: step + 1, total: STEPS.length })} · {STEPS[step]}</Text>
+      <Text style={styles.stepTitle}>{t('planning.stepCounter', { current: step + 1, total: DISPLAY_STEPS.length })} · {STEPS[step]}</Text>
 
       {/* Step 1: name and date range */}
       {step === 0 && (
         <View style={styles.section}>
           
-          <Text style={styles.sectionTitle}>Nombre del Menú (Opcional)</Text>
-          <Text style={styles.hint}>Dale un nombre para encontrarlo fácilmente después.</Text>
+          <Text style={styles.sectionTitle}>{t('planning.nameLabel')}</Text>
+          <Text style={styles.hint}>{t('planning.nameHint')}</Text>
           <TextInput
             style={styles.nameInput}
             value={name}
             onChangeText={setName}
-            placeholder="Ej: Menú de Verano, Semana Santa..."
-            placeholderTextColor="#999"
+            placeholder={t('planning.namePlaceholder')}
+            placeholderTextColor={colors.textFaint}
           />
 
           <View style={{ marginTop: 24 }}>
-            <Text style={styles.sectionTitle}>Fechas del Menú</Text>
+            <Text style={styles.sectionTitle}>{t('planning.datesTitle')}</Text>
             <CalendarPicker
               startDate={startDate}
               endDate={endDate}
@@ -406,7 +407,7 @@ export function PlanConfigScreen() {
       {step === 4 && startDate && endDate && (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>{t('planning.summary')}</Text>
-          {name ? <Text style={[styles.summaryText, {fontWeight: 'bold', color: '#1a1a1a', marginBottom: 8}]}>🏷️ {name}</Text> : null}
+          {name ? <Text style={[styles.summaryText, {fontWeight: 'bold', color: colors.text, marginBottom: 8}]}>🏷️ {name}</Text> : null}
           <Text style={styles.summaryText}>📅 {formatDate(startDate)} — {formatDate(endDate)} ({t('planning.periodInfo', { days: periodDays })})</Text>
           <Text style={styles.summaryText}>👥 {t('planning.servingsSummary', { count: servings })}</Text>
           <Text style={styles.summaryText}>🍽️ {t('planning.requiredLunches', { count: requiredLunches })}</Text>
@@ -428,7 +429,7 @@ export function PlanConfigScreen() {
           disabled={!canAdvance}
         >
           <Text style={[styles.nextButtonText, !canAdvance && styles.nextButtonTextDisabled]}>
-            Siguiente
+            {t('planning.next')}
           </Text>
         </TouchableOpacity>
       </View>
@@ -436,49 +437,50 @@ export function PlanConfigScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+const makeStyles = (colors: ThemeColors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background },
   content: { padding: 16, paddingBottom: 40 },
   header: { flexDirection: 'row', alignItems: 'center', marginBottom: 24 },
-  backButton: { fontSize: 15, color: '#007AFF', fontWeight: '500' },
-  headerTitle: { fontSize: 24, fontWeight: '700', color: '#1a1a1a', marginLeft: 12 },
+  backButton: { fontSize: 15, color: colors.accent, fontWeight: '500' },
+  headerTitle: { fontSize: 24, fontWeight: '700', color: colors.text },
+  exitButton: { fontSize: 15, color: colors.dangerText, fontWeight: '600' },
   section: { marginBottom: 24 },
-  sectionTitle: { fontSize: 16, fontWeight: '600', color: '#333', marginBottom: 8 },
-  nameInput: { borderWidth: 1, borderColor: '#ccc', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, color: '#1a1a1a', marginTop: 8 },
-  periodInfo: { fontSize: 14, color: '#007AFF', fontWeight: '500', marginTop: 8 },
-  hint: { fontSize: 13, color: '#888', marginTop: 4 },
-  errorText: { fontSize: 13, color: '#c00', marginTop: 4 },
+  sectionTitle: { fontSize: 16, fontWeight: '600', color: colors.text, marginBottom: 8 },
+  nameInput: { borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, color: colors.text, marginTop: 8 },
+  periodInfo: { fontSize: 14, color: colors.accent, fontWeight: '500', marginTop: 8 },
+  hint: { fontSize: 13, color: colors.textFaint, marginTop: 4 },
+  errorText: { fontSize: 13, color: colors.danger, marginTop: 4 },
   daysGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
-  dayChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, backgroundColor: '#f0f0f0', borderWidth: 1, borderColor: '#ddd' },
-  dayChipSelected: { backgroundColor: '#007AFF', borderColor: '#007AFF' },
-  dayChipText: { fontSize: 12, fontWeight: '500', color: '#555' },
-  dayChipTextSelected: { color: '#fff' },
+  dayChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, backgroundColor: colors.border, borderWidth: 1, borderColor: colors.border },
+  dayChipSelected: { backgroundColor: colors.accent, borderColor: colors.accent },
+  dayChipText: { fontSize: 12, fontWeight: '500', color: colors.textMuted },
+  dayChipTextSelected: { color: colors.textInverse },
   freeDaysContainer: { marginTop: 8 },
-  freeDayRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8, paddingHorizontal: 8, borderRadius: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#eee' },
-  freeDayRowActive: { backgroundColor: '#FDECEA', borderBottomColor: '#F5B7B1' },
-  freeDayLabel: { fontSize: 13, fontWeight: '500', color: '#333', width: 120 },
-  freeDayLabelActive: { color: '#C0392B', fontWeight: '700' },
+  freeDayRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8, paddingHorizontal: 8, borderRadius: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  freeDayRowActive: { backgroundColor: colors.dangerBg, borderBottomColor: colors.danger },
+  freeDayLabel: { fontSize: 13, fontWeight: '500', color: colors.text, width: 120 },
+  freeDayLabelActive: { color: colors.dangerText, fontWeight: '700' },
   freeDayOptions: { flexDirection: 'row', gap: 6 },
-  freeDayChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#ddd' },
-  freeDayChipSelected: { backgroundColor: '#E74C3C', borderColor: '#E74C3C' },
-  freeDayChipText: { fontSize: 12, color: '#666' },
-  freeDayChipTextSelected: { color: '#fff', fontWeight: '500' },
+  freeDayChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
+  freeDayChipSelected: { backgroundColor: colors.danger, borderColor: colors.danger },
+  freeDayChipText: { fontSize: 12, color: colors.textMuted },
+  freeDayChipTextSelected: { color: colors.textInverse, fontWeight: '500' },
   freeDayChipTextStruck: { textDecorationLine: 'line-through' },
-  summaryText: { fontSize: 14, color: '#555', marginBottom: 4 },
-  nextButton: { backgroundColor: '#007AFF', borderRadius: 10, paddingVertical: 14, alignItems: 'center', marginTop: 8, flex: 1 },
-  nextButtonDisabled: { backgroundColor: '#ccc' },
-  nextButtonText: { fontSize: 16, fontWeight: '600', color: '#fff' },
-  nextButtonTextDisabled: { color: '#888' },
+  summaryText: { fontSize: 14, color: colors.textMuted, marginBottom: 4 },
+  nextButton: { backgroundColor: colors.accent, borderRadius: 10, paddingVertical: 14, alignItems: 'center', marginTop: 8, flex: 1 },
+  nextButtonDisabled: { backgroundColor: colors.borderStrong },
+  nextButtonText: { fontSize: 16, fontWeight: '600', color: colors.textInverse },
+  nextButtonTextDisabled: { color: colors.textFaint },
   wizardNav: { flexDirection: 'row', gap: 12, marginTop: 8 },
-  prevButton: { borderRadius: 10, paddingVertical: 14, paddingHorizontal: 20, alignItems: 'center', marginTop: 8, backgroundColor: '#f0f0f0' },
-  prevButtonText: { fontSize: 16, fontWeight: '600', color: '#333' },
+  prevButton: { borderRadius: 10, paddingVertical: 14, paddingHorizontal: 20, alignItems: 'center', marginTop: 8, backgroundColor: colors.card },
+  prevButtonText: { fontSize: 16, fontWeight: '600', color: colors.text },
   stepper: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   stepperItem: { flexDirection: 'row', alignItems: 'center', flexShrink: 1 },
-  stepperDot: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#eee', alignItems: 'center', justifyContent: 'center' },
-  stepperDotActive: { backgroundColor: '#007AFF' },
-  stepperDotDone: { backgroundColor: '#34C759' },
-  stepperDotText: { fontSize: 12, fontWeight: '700', color: '#888' },
-  stepperDotTextActive: { color: '#fff' },
-  stepperLine: { width: 24, height: 2, backgroundColor: '#eee', marginHorizontal: 4 },
-  stepTitle: { fontSize: 13, fontWeight: '600', color: '#888', marginBottom: 16, textTransform: 'uppercase' },
+  stepperDot: { width: 26, height: 26, borderRadius: 13, backgroundColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  stepperDotActive: { backgroundColor: colors.accent },
+  stepperDotDone: { backgroundColor: colors.success },
+  stepperDotText: { fontSize: 12, fontWeight: '700', color: colors.textFaint },
+  stepperDotTextActive: { color: colors.textInverse },
+  stepperLine: { width: 24, height: 2, backgroundColor: colors.border, marginHorizontal: 4 },
+  stepTitle: { fontSize: 13, fontWeight: '600', color: colors.textFaint, marginBottom: 16, textTransform: 'uppercase' },
 });

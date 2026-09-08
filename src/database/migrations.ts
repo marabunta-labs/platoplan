@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 /**
  * Schema version. Increment when adding new migrations.
  */
-const CURRENT_VERSION = 6;
+const CURRENT_VERSION = 7;
 
 /**
  * Runs all pending migrations. Idempotent — safe to call on every app launch.
@@ -37,6 +37,9 @@ export async function runMigrations(db: SQLite.SQLiteDatabase): Promise<void> {
   }
   if (currentVersion < 6) {
     await applyMigrationV6(db);
+  }
+  if (currentVersion < 7) {
+    await applyMigrationV7(db);
   }
 
   // Set the new version
@@ -268,5 +271,95 @@ async function applyMigrationV6(db: SQLite.SQLiteDatabase): Promise<void> {
   }
   if (!columnNames.includes('meal_notes')) {
     await db.execAsync(`ALTER TABLE menu_plans ADD COLUMN meal_notes TEXT NOT NULL DEFAULT '{}';`);
+  }
+}
+
+/**
+ * Migration v7: Adds ON DELETE CASCADE to the foreign keys that previously used
+ * the default RESTRICT behaviour, so deleting a recipe or ingredient no longer
+ * fails when it is still referenced by a plan or a shopping list.
+ *
+ * - plan_assignments.recipe_id  → recipes(id)     ON DELETE CASCADE
+ * - shopping_list_items.ingredient_id → ingredients(id) ON DELETE CASCADE
+ *
+ * SQLite cannot alter a foreign key in place, so each table is rebuilt following
+ * the official 12-step procedure (recreate → copy → drop → rename), with foreign
+ * keys temporarily disabled and the whole thing wrapped in a transaction.
+ *
+ * Idempotent: guarded by a check on the current foreign-key definition, so it is
+ * safe to re-run if a previous attempt was interrupted.
+ */
+async function applyMigrationV7(db: SQLite.SQLiteDatabase): Promise<void> {
+  // Detect whether the CASCADE is already present (avoids rebuilding twice).
+  const assignmentFks = await db.getAllAsync<{ table: string; on_delete: string }>(
+    `PRAGMA foreign_key_list(plan_assignments);`
+  );
+  const recipeFk = assignmentFks.find((fk) => fk.table === 'recipes');
+  const alreadyMigrated = recipeFk?.on_delete === 'CASCADE';
+  if (alreadyMigrated) return;
+
+  // Foreign key enforcement must be OFF while rebuilding tables. This PRAGMA is
+  // a no-op inside a transaction, so it is set before BEGIN (execAsync here runs
+  // outside the withTransactionAsync block).
+  await db.execAsync('PRAGMA foreign_keys = OFF;');
+
+  try {
+    await db.withTransactionAsync(async () => {
+      // ── plan_assignments: rebuild with recipe_id ON DELETE CASCADE ──
+      await db.execAsync(`
+        CREATE TABLE plan_assignments_new (
+          id TEXT PRIMARY KEY,
+          plan_id TEXT NOT NULL REFERENCES menu_plans(id) ON DELETE CASCADE,
+          day_index INTEGER NOT NULL,
+          slot TEXT NOT NULL CHECK(slot IN ('comida', 'cena')),
+          recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(plan_id, day_index, slot)
+        );
+      `);
+      await db.execAsync(`
+        INSERT INTO plan_assignments_new (id, plan_id, day_index, slot, recipe_id, updated_at)
+        SELECT id, plan_id, day_index, slot, recipe_id,
+               COALESCE(updated_at, datetime('now'))
+        FROM plan_assignments;
+      `);
+      await db.execAsync('DROP TABLE plan_assignments;');
+      await db.execAsync('ALTER TABLE plan_assignments_new RENAME TO plan_assignments;');
+      await db.execAsync(
+        'CREATE INDEX IF NOT EXISTS idx_plan_assignments_plan ON plan_assignments(plan_id);'
+      );
+
+      // ── shopping_list_items: rebuild with ingredient_id ON DELETE CASCADE ──
+      await db.execAsync(`
+        CREATE TABLE shopping_list_items_new (
+          id TEXT PRIMARY KEY,
+          list_id TEXT NOT NULL REFERENCES shopping_lists(id) ON DELETE CASCADE,
+          ingredient_id TEXT NOT NULL REFERENCES ingredients(id) ON DELETE CASCADE,
+          total_quantity_needed REAL NOT NULL,
+          pantry_quantity_deducted REAL NOT NULL DEFAULT 0,
+          net_quantity REAL NOT NULL,
+          purchase_units INTEGER NOT NULL CHECK(purchase_units >= 0),
+          is_manually_edited INTEGER NOT NULL DEFAULT 0,
+          is_removed INTEGER NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+      await db.execAsync(`
+        INSERT INTO shopping_list_items_new (id, list_id, ingredient_id, total_quantity_needed,
+               pantry_quantity_deducted, net_quantity, purchase_units, is_manually_edited, is_removed, updated_at)
+        SELECT id, list_id, ingredient_id, total_quantity_needed,
+               pantry_quantity_deducted, net_quantity, purchase_units, is_manually_edited, is_removed,
+               COALESCE(updated_at, datetime('now'))
+        FROM shopping_list_items;
+      `);
+      await db.execAsync('DROP TABLE shopping_list_items;');
+      await db.execAsync('ALTER TABLE shopping_list_items_new RENAME TO shopping_list_items;');
+      await db.execAsync(
+        'CREATE INDEX IF NOT EXISTS idx_shopping_list_items_list ON shopping_list_items(list_id);'
+      );
+    });
+  } finally {
+    // Re-enable foreign key enforcement regardless of outcome.
+    await db.execAsync('PRAGMA foreign_keys = ON;');
   }
 }

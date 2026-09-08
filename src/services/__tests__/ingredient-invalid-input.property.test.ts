@@ -230,7 +230,7 @@ describe('Feature: platoplan-web-supabase, Property 2: Ingredient form rejects i
     );
   });
 
-  it('rejects empty purchase format description and does not write to database', async () => {
+  it('accepts an empty purchase format description (description is optional)', async () => {
     await fc.assert(
       fc.asyncProperty(
         arbValidName,
@@ -241,6 +241,16 @@ describe('Feature: platoplan-web-supabase, Property 2: Ingredient form rejects i
         async (name, unit, description, quantity, category) => {
           vi.clearAllMocks();
           mockIngredientRepository.getAll.mockResolvedValue([]);
+          mockIngredientRepository.create.mockResolvedValue({
+            id: 'ing-new',
+            name,
+            unit,
+            purchaseFormat: { description, quantity },
+            category,
+            categories: [category],
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          });
 
           const db = createMockDb();
           const service = new IngredientService(db);
@@ -259,17 +269,9 @@ describe('Feature: platoplan-web-supabase, Property 2: Ingredient form rejects i
             thrown = e;
           }
 
-          // Must throw a validation error
-          expect(thrown).toBeDefined();
-          expect(isValidationError(thrown)).toBe(true);
-          if (isValidationError(thrown)) {
-            expect(
-              thrown.fields.some((f) => f.field === 'purchaseFormat.description')
-            ).toBe(true);
-          }
-
-          // Database must not be modified
-          expect(mockIngredientRepository.create).not.toHaveBeenCalled();
+          // Description is optional: creation succeeds and writes to the database.
+          expect(thrown).toBeUndefined();
+          expect(mockIngredientRepository.create).toHaveBeenCalledTimes(1);
         }
       ),
       { numRuns: 100 }

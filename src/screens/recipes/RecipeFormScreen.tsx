@@ -18,8 +18,9 @@ import { AlertCompat } from '../../utils/alert';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 
-import type { RecipeStackParamList } from '../../navigation/types';
+import type { RecipeStackParamList, MainTabParamList } from '../../navigation/types';
 import type { MealType, PrepTime } from '../../models/enums';
 import type { RecipeIngredient, Ingredient } from '../../models/types';
 import { SearchBar, IngredientFormModal, Stepper } from '../../components';
@@ -53,6 +54,20 @@ export function RecipeFormScreen() {
   const { recipes, createRecipe, updateRecipe } = useRecipes();
   const { searchIngredients } = useIngredients();
 
+  // When the form was opened from the plan flow, return to that plan's recipe
+  // step instead of just popping back to the Recipes list.
+  const returnToPlanId = route.params?.returnToPlanId;
+  const leaveForm = () => {
+    if (returnToPlanId) {
+      const parent = navigation.getParent<BottomTabNavigationProp<MainTabParamList>>();
+      if (parent) {
+        parent.navigate('PlanningTab', { screen: 'RecipeSelection', params: { planId: returnToPlanId } });
+        return;
+      }
+    }
+    navigation.goBack();
+  };
+
   // Form state
   const [name, setName] = useState('');
   const [mealType, setMealType] = useState<MealType>('comida');
@@ -78,6 +93,12 @@ export function RecipeFormScreen() {
   // Pending ingredient (waiting for quantity input)
   const [pendingIngredient, setPendingIngredient] = useState<Ingredient | null>(null);
   const [pendingQuantity, setPendingQuantity] = useState('');
+
+  // Raw text drafts for the inline quantity inputs, keyed by ingredientId.
+  // Kept separate from the numeric quantity so partial input like "0." or "1,"
+  // stays visible while typing (deriving the value from the number would drop
+  // a trailing decimal separator).
+  const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
 
   // Load existing recipe data for editing
   useEffect(() => {
@@ -153,7 +174,7 @@ export function RecipeFormScreen() {
           return;
         }
       }
-      navigation.goBack();
+      leaveForm();
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : t('recipes.saveErrorRetry');
       AlertCompat.alert(t('common.error'), errMsg);
@@ -219,6 +240,8 @@ export function RecipeFormScreen() {
   // Accepts partial input (empty / decimal separator) and stores 0 for invalid
   // values so the field stays editable; save-time validation guards final data.
   const handleInlineQuantityChange = (ingredientId: string, text: string) => {
+    // Keep the raw text so a trailing "." / "," survives while typing.
+    setQuantityDrafts((prev) => ({ ...prev, [ingredientId]: text }));
     const normalized = text.replace(',', '.');
     const qty = normalized.trim() === '' ? 0 : parseFloat(normalized);
     setIngredients((prev) =>
@@ -262,7 +285,7 @@ export function RecipeFormScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} accessibilityRole="button" accessibilityLabel={t('common.back')}>
+        <TouchableOpacity onPress={leaveForm} accessibilityRole="button" accessibilityLabel={t('common.back')}>
           <Text style={styles.backButton}>{t('common.back')}</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>
@@ -471,7 +494,7 @@ export function RecipeFormScreen() {
                     <View style={styles.ingredientQtyBox}>
                       <TextInput
                         style={styles.ingredientQtyInput}
-                        value={String(ingredient.quantity)}
+                        value={quantityDrafts[ingredient.ingredientId] ?? String(ingredient.quantity)}
                         onChangeText={(text) => handleInlineQuantityChange(ingredient.ingredientId, text)}
                         keyboardType="decimal-pad"
                         selectTextOnFocus

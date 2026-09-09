@@ -37,6 +37,19 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
+# Playwright / demo recording artifacts (regenerable via `npm run demo:video`)
+e2e-artifacts/
+demo/
+playwright-report/
+test-results/
+blob-report/
+playwright/.cache/
+
+# Editor / environment specific
+.claude/
+.replit
+CLAUDE.md
+
 # generated native folders
 /ios
 /android

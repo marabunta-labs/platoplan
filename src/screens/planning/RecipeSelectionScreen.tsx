@@ -20,8 +20,9 @@ import {
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 
-import type { PlanningStackParamList } from '../../navigation/types';
+import type { PlanningStackParamList, MainTabParamList } from '../../navigation/types';
 import type { Recipe, MenuPlan } from '../../models/types';
 import { useRecipes, usePlanning, useIngredients } from '../../hooks';
 import { planMeals } from '../../services/smart-distribution';
@@ -257,6 +258,16 @@ export function RecipeSelectionScreen() {
     t,
   ]);
 
+  // Opens the Recipes tab's form to create a recipe without abandoning the plan.
+  // Passing returnToPlanId makes the form return here (this plan's recipe step)
+  // once the recipe is saved or the user goes back.
+  const handleCreateRecipe = useCallback(() => {
+    const parent = navigation.getParent<BottomTabNavigationProp<MainTabParamList>>();
+    if (parent) {
+      parent.navigate('RecipesTab', { screen: 'RecipeForm', params: { returnToPlanId: planId } });
+    }
+  }, [navigation, planId]);
+
   const handleConfirm = useCallback(() => {
     if (gapCount > 0) {
       AlertCompat.alert(
@@ -354,6 +365,18 @@ export function RecipeSelectionScreen() {
           <Text style={styles.exitButton}>{t('planning.exit')}</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Quick access to create a new recipe without leaving the plan flow.
+          Opens the Recipes tab's form; on return the selection list refreshes
+          automatically (recipes table invalidation), so the new recipe appears. */}
+      <TouchableOpacity
+        style={styles.newRecipeButton}
+        onPress={handleCreateRecipe}
+        accessibilityRole="button"
+        accessibilityLabel={t('recipes.newRecipe')}
+      >
+        <Text style={styles.newRecipeButtonText}>＋ {t('recipes.newRecipe')}</Text>
+      </TouchableOpacity>
 
       {/* Lunch Section */}
       <View style={styles.section}>
@@ -458,6 +481,8 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   headerTitle: { fontSize: 24, fontWeight: '700', color: colors.text, marginLeft: 12 },
   stepBadge: { fontSize: 12, fontWeight: '600', color: colors.textFaint, marginLeft: 12, textTransform: 'uppercase' },
   exitButton: { fontSize: 15, color: colors.dangerText, fontWeight: '600' },
+  newRecipeButton: { alignSelf: 'flex-start', backgroundColor: colors.accentSoft, borderWidth: 1, borderColor: colors.accent, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, marginBottom: 16 },
+  newRecipeButtonText: { fontSize: 14, fontWeight: '600', color: colors.accentText },
   title: { fontSize: 24, fontWeight: '700', color: colors.text, marginBottom: 24 },
   section: { marginBottom: 24 },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },

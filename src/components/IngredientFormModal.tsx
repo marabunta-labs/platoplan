@@ -27,7 +27,7 @@ import type { MeasureUnit } from '../models/enums';
 import { useDatabase } from '../context/DatabaseContext';
 import { IngredientService } from '../services/ingredient.service';
 import { useI18n } from '../i18n';
-import { DEFAULT_INGREDIENT_CATEGORIES } from '../constants/ingredient-categories';
+import { categoryPresentation, mergeCategoryOptions, categoryKey } from '../constants/ingredient-categories';
 import { useTheme } from '../context/ThemeContext';
 import type { ThemeColors } from '../constants/theme';
 import { AlertCompat } from '../utils/alert';
@@ -76,7 +76,12 @@ export function IngredientFormModal({
   const [unit, setUnit] = useState<MeasureUnit | null>(null);
   const [purchaseFormatDescription, setPurchaseFormatDescription] = useState('');
   const [purchaseFormatQuantity, setPurchaseFormatQuantity] = useState('');
-  const [category, setCategory] = useState('');
+  // Categories are kept as an array (NOT a comma-joined string) so a category
+  // whose own name contains a comma — e.g. "Pasta, arroz y legumbres" — is never
+  // split into two.
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  // What the user is currently typing in the category box (before confirming it).
+  const [categoryDraft, setCategoryDraft] = useState('');
 
   // UI state
   const [errors, setErrors] = useState<FormErrors>({});
@@ -89,7 +94,8 @@ export function IngredientFormModal({
       setUnit(ingredient?.unit ?? null);
       setPurchaseFormatDescription(ingredient?.purchaseFormat.description ?? '');
       setPurchaseFormatQuantity(ingredient ? String(ingredient.purchaseFormat.quantity) : '');
-      setCategory((ingredient?.categories?.length ? ingredient.categories : ingredient?.category ? [ingredient.category] : []).join(', '));
+      setSelectedCategories(ingredient?.categories?.length ? ingredient.categories : ingredient?.category ? [ingredient.category] : []);
+      setCategoryDraft('');
       setErrors({});
       setIsSubmitting(false);
     }
@@ -125,13 +131,13 @@ export function IngredientFormModal({
     }
 
     // Category validation
-    if (!category.trim()) {
+    if (selectedCategories.length === 0 && !categoryDraft.trim()) {
       newErrors.category = t('ingredientModal.categoryRequired');
     }
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
-  }, [name, unit, purchaseFormatDescription, purchaseFormatQuantity, category, t]);
+  }, [name, unit, purchaseFormatDescription, purchaseFormatQuantity, selectedCategories, categoryDraft, t]);
 
   /**
    * Checks for duplicate ingredient name (case-insensitive).
@@ -188,10 +194,19 @@ export function IngredientFormModal({
           description: purchaseFormatDescription.trim(),
           quantity: parseFloat(purchaseFormatQuantity),
         },
-        category: category.trim(),
+        category: '',
       };
 
-      const categories = [...new Set(category.split(',').map((value) => value.trim()).filter(Boolean))];
+      // Include any category still typed in the draft box but not yet confirmed.
+      // Dedup by the order-insensitive key so variants don't pile up.
+      const pending = [...selectedCategories, categoryDraft.trim()].filter(Boolean);
+      const seenKeys = new Set<string>();
+      const categories = pending.filter((c) => {
+        const k = categoryKey(c);
+        if (seenKeys.has(k)) return false;
+        seenKeys.add(k);
+        return true;
+      });
       input.category = categories[0];
       input.categories = categories;
       const savedIngredient = ingredient ? await service.update(ingredient.id, input) : await service.create(input);
@@ -232,7 +247,8 @@ export function IngredientFormModal({
     unit,
     purchaseFormatDescription,
     purchaseFormatQuantity,
-    category,
+    selectedCategories,
+    categoryDraft,
     onCreated,
     onClose,
     t,
@@ -279,6 +295,52 @@ export function IngredientFormModal({
       ]
     );
   }, [ingredient, db, t, onDeleted, onClose]);
+
+  // ── Category selection helpers ──────────────────────────────────────────
+  // `selectedCategories` (an array) is the source of truth. Options merge the
+  // built-in + used categories, deduped case/word-order-insensitively.
+  const allCategoryOptions = useMemo(
+    () => mergeCategoryOptions([...categorySuggestions, ...selectedCategories]),
+    [categorySuggestions, selectedCategories]
+  );
+
+  const isSelected = useCallback(
+    (name: string) => selectedCategories.some((c) => categoryKey(c) === categoryKey(name)),
+    [selectedCategories]
+  );
+
+  const categoryExists = useCallback(
+    (name: string) => allCategoryOptions.some((o) => categoryKey(o.name) === categoryKey(name)),
+    [allCategoryOptions]
+  );
+
+  // Suggestions filtered by the typed text and excluding already-selected ones.
+  const categoryOptionsFiltered = useMemo(() => {
+    const q = categoryDraft.trim().toLowerCase();
+    return allCategoryOptions.filter(
+      (o) => !isSelected(o.name) && (q === '' || o.name.toLowerCase().includes(q))
+    );
+  }, [allCategoryOptions, categoryDraft, isSelected]);
+
+  const addCategory = useCallback(
+    (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      // Reuse the canonical casing/emoji name when it matches a known option.
+      const canonical =
+        allCategoryOptions.find((o) => categoryKey(o.name) === categoryKey(trimmed))?.name ?? trimmed;
+      setSelectedCategories((prev) =>
+        prev.some((c) => categoryKey(c) === categoryKey(canonical)) ? prev : [...prev, canonical]
+      );
+      setCategoryDraft('');
+      if (errors.category) setErrors((prev) => ({ ...prev, category: undefined }));
+    },
+    [allCategoryOptions, errors.category]
+  );
+
+  const removeCategory = useCallback((name: string) => {
+    setSelectedCategories((prev) => prev.filter((c) => categoryKey(c) !== categoryKey(name)));
+  }, []);
 
   return (
     <Modal
@@ -420,40 +482,64 @@ export function IngredientFormModal({
               {/* Category */}
               <View style={styles.fieldGroup}>
                 <Text style={styles.label}>{t('ingredientModal.category')}</Text>
+
+                {/* Selected categories as removable chips */}
+                {selectedCategories.length > 0 && (
+                  <View style={styles.selectedChips}>
+                    {selectedCategories.map((name) => {
+                      const p = categoryPresentation(name);
+                      return (
+                        <View key={name} style={[styles.selectedChip, { backgroundColor: p.backgroundColor }]}>
+                          <Text style={[styles.selectedChipText, { color: p.color }]}>{p.emoji} {p.name}</Text>
+                          <TouchableOpacity
+                            onPress={() => removeCategory(name)}
+                            accessibilityRole="button"
+                            accessibilityLabel={`${t('common.delete')} ${p.name}`}
+                          >
+                            <Text style={[styles.selectedChipRemove, { color: p.color }]}>✕</Text>
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+
                 <TextInput
                   style={[styles.input, errors.category && styles.inputError]}
-                  value={category}
+                  value={categoryDraft}
                   onChangeText={(text) => {
-                    setCategory(text);
+                    setCategoryDraft(text);
                     if (errors.category) setErrors((prev) => ({ ...prev, category: undefined }));
                   }}
-                  placeholder={`${t('ingredientModal.categoryPlaceholder')} (separa varias con comas)`}
+                  onSubmitEditing={() => addCategory(categoryDraft)}
+                  placeholder={t('ingredientModal.categoryPlaceholder')}
                   placeholderTextColor={colors.textFaint}
                   accessibilityLabel={t('ingredientModal.category')}
                 />
                 {errors.category && <Text style={styles.errorText}>{errors.category}</Text>}
+
+                {/* Single, deduplicated, emoji-decorated suggestion list, filtered
+                    by what is being typed and excluding already-selected ones. */}
                 <View style={styles.suggestions}>
-                  {DEFAULT_INGREDIENT_CATEGORIES.map((option) => (
-                    <TouchableOpacity key={option.name} style={[styles.suggestion, { backgroundColor: option.backgroundColor }]} onPress={() => {
-                      const selected = category.split(',').map((value) => value.trim()).filter(Boolean);
-                      if (!selected.some((value) => value.toLowerCase() === option.name.toLowerCase())) setCategory([...selected, option.name].join(', '));
-                    }}>
+                  {categoryOptionsFiltered.map((option) => (
+                    <TouchableOpacity
+                      key={option.name}
+                      style={[styles.suggestion, { backgroundColor: option.backgroundColor }]}
+                      onPress={() => addCategory(option.name)}
+                    >
                       <Text style={[styles.suggestionText, { color: option.color }]}>{option.emoji} {option.name}</Text>
                     </TouchableOpacity>
                   ))}
+                  {/* Offer to create a brand-new category from the typed text. */}
+                  {categoryDraft.trim().length > 0 && !categoryExists(categoryDraft) && (
+                    <TouchableOpacity
+                      style={[styles.suggestion, styles.suggestionNew]}
+                      onPress={() => addCategory(categoryDraft)}
+                    >
+                      <Text style={[styles.suggestionText, { color: colors.accent }]}>➕ {categoryDraft.trim()}</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
-                {categorySuggestions.length > 0 && (
-                  <View style={styles.suggestions}>
-                    {categorySuggestions.map((suggestion) => (
-                      <TouchableOpacity key={suggestion} style={styles.suggestion} onPress={() => {
-                        const selected = category.split(',').map((value) => value.trim()).filter(Boolean);
-                        if (!selected.some((value) => value.toLowerCase() === suggestion.toLowerCase())) setCategory([...selected, suggestion].join(', '));
-                      }}>
-                        <Text style={styles.suggestionText}>{suggestion}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                )}
               </View>
 
               {/* Delete (edit mode only) */}
@@ -566,7 +652,12 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   },
   suggestions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
   suggestion: { backgroundColor: colors.accentSoft, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5 },
+  suggestionNew: { backgroundColor: colors.accentSoft, borderWidth: 1, borderColor: colors.accent },
   suggestionText: { color: colors.accent, fontSize: 12 },
+  selectedChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
+  selectedChip: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5 },
+  selectedChipText: { fontSize: 12, fontWeight: '600' },
+  selectedChipRemove: { fontSize: 12, fontWeight: '700' },
   unitPicker: {
     flexDirection: 'row',
     gap: 8,

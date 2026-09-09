@@ -21,6 +21,7 @@ import { MULTI_COLUMN_BREAKPOINT } from '../../components/ResponsiveLayout';
 import { useShoppingList, usePlanning, useRecipes } from '../../hooks';
 import { useI18n } from '../../i18n';
 import { shareText } from '../../utils/share';
+import { exportPdf, escapeHtml } from '../../utils/exportPdf';
 import type { ShoppingStackParamList } from '../../navigation/types';
 
 interface ShoppingSection {
@@ -46,6 +47,7 @@ export function ShoppingListScreen() {
   const [ingredientInfo, setIngredientInfo] = useState<ShoppingListItem | null>(null);
   const [sortField, setSortField] = useState<'category' | 'name'>('category');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+  const [exportChoiceVisible, setExportChoiceVisible] = useState(false);
 
   // Estado local blindado para asegurar que los planes llegan al desplegable
   const [allPlans, setAllPlans] = useState<MenuPlan[]>([]);
@@ -217,6 +219,70 @@ export function ShoppingListScreen() {
     shareText(t('shopping.shareTitle'), text);
   }, [shoppingList, allVisibleItems, currentPlan, isCustomList, t]);
 
+  const handleExportPdf = useCallback(() => {
+    if (!shoppingList || allVisibleItems.length === 0) return;
+
+    const toBuyItems = allVisibleItems.filter(item => item.purchaseUnits > 0);
+    if (toBuyItems.length === 0) return;
+
+    const planTitle = currentPlan && !isCustomList
+      ? (currentPlan.name || formatDate(currentPlan.startDate))
+      : t('shopping.title');
+
+    // Group items to buy by category (same grouping as the text export).
+    const grouped: Record<string, ShoppingListItem[]> = {};
+    for (const item of toBuyItems) {
+      const cat = item.ingredient?.category || t('shopping.otherCategory');
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(item);
+    }
+
+    const sectionsHtml = Object.entries(grouped).map(([cat, items]) => {
+      const rows = items.map((item) => {
+        const name = escapeHtml(item.ingredient?.name ?? item.ingredientId);
+        const unit = item.ingredient?.unit
+          ? escapeHtml((t(`units.${item.ingredient.unit}` as any) || item.ingredient.unit))
+          : '';
+        const purchaseFormat = item.ingredient?.purchaseFormat;
+        const buyStr = purchaseFormat
+          ? `${item.purchaseUnits} × ${escapeHtml(purchaseFormat.description)} (${purchaseFormat.quantity} ${unit})`
+          : `${item.purchaseUnits} ${unit}`;
+        const netStr = `${item.netQuantity} ${unit}`.trim();
+        return (
+          `<li class="sl-item">` +
+            `<span class="sl-name">${name}</span>` +
+            `<span class="sl-amount">${buyStr} · ${escapeHtml(netStr)}</span>` +
+          `</li>`
+        );
+      }).join('');
+      return (
+        `<div class="sl-section">` +
+          `<h2>📦 ${escapeHtml(cat)}</h2>` +
+          `<ul class="sl-list">${rows}</ul>` +
+        `</div>`
+      );
+    }).join('');
+
+    const subtitle = currentPlan && !isCustomList
+      ? escapeHtml(t('shopping.exportPlanLine', { name: currentPlan.name || formatDate(currentPlan.startDate) }))
+      : escapeHtml(t('shopping.exportTitle'));
+
+    const bodyHtml =
+      `<h1>🛒 ${escapeHtml(planTitle)}</h1>` +
+      `<p class="subtitle">${subtitle}</p>` +
+      `<style>` +
+        `.sl-section { break-inside: avoid; page-break-inside: avoid; margin-bottom: 14px; }` +
+        `.sl-section h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: #C0392B; border-bottom: 2px solid #F5B7B1; padding-bottom: 4px; margin: 0 0 8px; }` +
+        `.sl-list { list-style: none; margin: 0; padding: 0; }` +
+        `.sl-item { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid #EFECE6; font-size: 13px; break-inside: avoid; }` +
+        `.sl-name { font-weight: 600; color: #1a1a1a; }` +
+        `.sl-amount { color: #666; text-align: right; white-space: nowrap; }` +
+      `</style>` +
+      sectionsHtml;
+
+    exportPdf({ title: planTitle, bodyHtml });
+  }, [shoppingList, allVisibleItems, currentPlan, isCustomList, t]);
+
   const { width } = useWindowDimensions();
   const isWideViewport = width > MULTI_COLUMN_BREAKPOINT;
 
@@ -276,7 +342,7 @@ export function ShoppingListScreen() {
         </TouchableOpacity>
         
         <View style={styles.headerActionsGroup}>
-          <TouchableOpacity style={[styles.headerBtn, { backgroundColor: colors.successBg, borderColor: colors.success }]} onPress={handleExportList}>
+          <TouchableOpacity style={[styles.headerBtn, { backgroundColor: colors.successBg, borderColor: colors.success }]} onPress={() => setExportChoiceVisible(true)}>
             <Text style={[styles.headerBtnText, { color: colors.successText }]}>{t('shopping.export')}</Text>
           </TouchableOpacity>
 
@@ -293,6 +359,30 @@ export function ShoppingListScreen() {
           )}
         </View>
       </View>
+
+      {/* Export chooser: Text or PDF */}
+      <Modal visible={exportChoiceVisible} transparent animationType="fade" onRequestClose={() => setExportChoiceVisible(false)}>
+        <View style={styles.pickerOverlay}>
+          <View style={styles.pickerContainer}>
+            <Text style={styles.pickerTitle}>{t('shopping.exportTitleChoice')}</Text>
+            <TouchableOpacity
+              style={[styles.exportOption, { backgroundColor: colors.accentSoft, borderColor: colors.accent }]}
+              onPress={() => { setExportChoiceVisible(false); handleExportPdf(); }}
+            >
+              <Text style={[styles.exportOptionText, { color: colors.accentText }]}>📄 {t('shopping.exportAsPdf')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.exportOption, { backgroundColor: colors.successBg, borderColor: colors.success }]}
+              onPress={() => { setExportChoiceVisible(false); handleExportList(); }}
+            >
+              <Text style={[styles.exportOptionText, { color: colors.successText }]}>📝 {t('shopping.exportAsText')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.pickerCloseButton} onPress={() => setExportChoiceVisible(false)}>
+              <Text style={styles.pickerCloseText}>{t('common.cancel')}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={pickerVisible} transparent animationType="fade" onRequestClose={() => setPickerVisible(false)}>
         <View style={styles.pickerOverlay}>
@@ -413,6 +503,8 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   headerActionsGroup: { flexDirection: 'row', gap: 6 },
   headerBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, borderWidth: 1 },
   headerBtnText: { fontSize: 13, fontWeight: '600' },
+  exportOption: { paddingVertical: 14, paddingHorizontal: 16, borderRadius: 8, borderWidth: 1, alignItems: 'center', marginBottom: 10 },
+  exportOptionText: { fontSize: 15, fontWeight: '600' },
   
   sectionContainer: { marginBottom: 16 },
   sectionHeader: { paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1 },

@@ -73,6 +73,7 @@ export function PlanCalendarScreen() {
   const [orientation, setOrientation] = useState<'vertical' | 'horizontal'>('vertical');
   
   const [showDoneOptions, setShowDoneOptions] = useState(false);
+  const [exportChoiceVisible, setExportChoiceVisible] = useState(false);
   const [pdfChoiceVisible, setPdfChoiceVisible] = useState(false);
 
   const [selectedSlot, setSelectedSlot] = useState<{ day: number; slot: MealSlot; } | null>(null);
@@ -647,10 +648,10 @@ export function PlanCalendarScreen() {
             {t('planning.periodInfo', { days: plan.periodDays })}
           </Text>
           <View style={styles.headerActions}>
-            <TouchableOpacity style={styles.pdfButton} onPress={() => setPdfChoiceVisible(true)} accessibilityRole="button" accessibilityLabel={t('planning.exportAsPdf')}>
-              <Text style={styles.pdfButtonText}>🖨️ PDF</Text>
+            <TouchableOpacity style={styles.pdfButton} onPress={() => setExportChoiceVisible(true)} accessibilityRole="button" accessibilityLabel={t('planning.exportPlan')}>
+              <Text style={styles.pdfButtonText}>📤 {t('planning.exportPlan')}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.orientationButton} onPress={() => setOrientation((val) => val === 'vertical' ? 'horizontal' : 'vertical')}>
+            <TouchableOpacity style={styles.orientationButton} onPress={() => setOrientation((val) => val === 'vertical' ? 'horizontal' : 'vertical')} accessibilityRole="button">
               <Text style={styles.orientationButtonText}>{orientation === 'vertical' ? `↔ ${t('planning.horizontal')}` : `↕ ${t('planning.vertical')}`}</Text>
             </TouchableOpacity>
           </View>
@@ -840,6 +841,28 @@ export function PlanCalendarScreen() {
       <ConfirmDialog visible={conflictDialogVisible} title={t('planning.consecutiveWarningTitle')} message={pendingAssignment ? `${pendingAssignment.conflictMessage}\n\n¿Deseas confirmar el cambio de todas formas?` : ''} onConfirm={handleConfirmConflict} onCancel={handleCancelConflict} />
       <ConfirmDialog visible={Boolean(pendingMove)} title={pendingMove?.clearsFree ? t('planning.planFreeDayTitle') : t('planning.swapMealsTitle')} message={pendingMove?.clearsFree ? t('planning.planFreeDayMessage') : t('planning.swapMealsMessage')} onConfirm={confirmMove} onCancel={() => setPendingMove(null)} />
       <ConfirmDialog visible={Boolean(pendingDelete)} title={t('planning.deleteConfirmTitle')} message={t('planning.deleteConfirmMessage', { name: pendingDeleteName })} onConfirm={confirmDelete} onCancel={cancelDelete} />
+
+      {/* Export chooser: Text or PDF. PDF then asks orientation (pdfChoiceVisible). */}
+      <Modal visible={exportChoiceVisible} transparent animationType="fade" onRequestClose={() => setExportChoiceVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>{t('planning.exportPlan')}</Text>
+            <Text style={styles.modalText}>{t('planning.exportChoiceHint')}</Text>
+
+            <TouchableOpacity style={[styles.modalButton, styles.modalButtonPrimary]} onPress={() => { setExportChoiceVisible(false); setPdfChoiceVisible(true); }}>
+              <Text style={styles.modalButtonTextPrimary}>📄 {t('planning.exportOptionPdf')}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.modalButton, styles.modalButtonSecondary]} onPress={() => { setExportChoiceVisible(false); handleExport(); }}>
+              <Text style={styles.modalButtonTextSecondary}>📝 {t('planning.exportOptionText')}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.modalButton, styles.modalButtonCancel]} onPress={() => setExportChoiceVisible(false)}>
+              <Text style={styles.modalButtonTextCancel}>{t('common.cancel')}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={pdfChoiceVisible} transparent animationType="fade" onRequestClose={() => setPdfChoiceVisible(false)}>
         <View style={styles.modalOverlay}>

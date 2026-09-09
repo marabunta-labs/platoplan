@@ -37,7 +37,7 @@ interface SeedRecipe {
 }
 
 const INGREDIENTS: SeedIngredient[] = [
-  { key: 'huevos', name: 'Huevos', unit: 'unidades', purchaseFormat: { description: 'docena', quantity: 12 }, category: 'Huevos y lácteos', pantry: 12 },
+  { key: 'huevos', name: 'Huevos', unit: 'unidades', purchaseFormat: { description: 'docena', quantity: 12 }, category: 'Lácteos y huevos', pantry: 12 },
   { key: 'patata', name: 'Patata', unit: 'gramos', purchaseFormat: { description: 'malla', quantity: 2000 }, category: 'Verduras', pantry: 1500 },
   { key: 'cebolla', name: 'Cebolla', unit: 'unidades', purchaseFormat: { description: 'malla', quantity: 5 }, category: 'Verduras', pantry: 3 },
   { key: 'aceite', name: 'Aceite de oliva', unit: 'mililitros', purchaseFormat: { description: 'botella', quantity: 1000 }, category: 'Aceites y salsas', pantry: 800 },
@@ -47,7 +47,7 @@ const INGREDIENTS: SeedIngredient[] = [
   { key: 'pasta', name: 'Pasta', unit: 'gramos', purchaseFormat: { description: 'paquete', quantity: 500 }, category: 'Pasta, arroz y legumbres', pantry: 250 },
   { key: 'atun', name: 'Atún en lata', unit: 'gramos', purchaseFormat: { description: 'lata', quantity: 80 }, category: 'Conservas' },
   { key: 'lechuga', name: 'Lechuga', unit: 'unidades', purchaseFormat: { description: 'unidad', quantity: 1 }, category: 'Verduras' },
-  { key: 'queso', name: 'Queso rallado', unit: 'gramos', purchaseFormat: { description: 'bolsa', quantity: 200 }, category: 'Huevos y lácteos' },
+  { key: 'queso', name: 'Queso rallado', unit: 'gramos', purchaseFormat: { description: 'bolsa', quantity: 200 }, category: 'Lácteos y huevos' },
   { key: 'pan', name: 'Pan', unit: 'unidades', purchaseFormat: { description: 'barra', quantity: 1 }, category: 'Panadería' },
 ];
 

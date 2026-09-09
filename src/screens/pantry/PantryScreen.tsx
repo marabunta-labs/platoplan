@@ -61,6 +61,8 @@ export function PantryScreen() {
   const [sortByCategory, setSortByCategory] = useState(false);
   const [listQuery, setListQuery] = useState('');
   const [editingIngredient, setEditingIngredient] = useState<Ingredient | undefined>(undefined);
+  // Ingredient just created, to pre-select in the "add to pantry" modal.
+  const [justCreatedIngredient, setJustCreatedIngredient] = useState<Ingredient | null>(null);
   const [preparableRecipes, setPreparableRecipes] = useState<{
     full: Recipe[];
     partial: Recipe[];
@@ -150,6 +152,7 @@ export function PantryScreen() {
     async (ingredientId: string, quantity: number) => {
       await addOrUpdateEntry(ingredientId, quantity);
       setIsAddModalVisible(false);
+      setJustCreatedIngredient(null);
     },
     [addOrUpdateEntry]
   );
@@ -170,7 +173,9 @@ export function PantryScreen() {
       await refreshIngredients();
       setIsIngredientFormVisible(false);
       if (!editingIngredient) {
-        // Offer to add a newly-created ingredient to the pantry immediately.
+        // Offer to add a newly-created ingredient to the pantry immediately,
+        // pre-selected so the user goes straight to the quantity step.
+        setJustCreatedIngredient(newIngredient);
         setIsAddModalVisible(true);
       }
       setEditingIngredient(undefined);
@@ -296,11 +301,12 @@ export function PantryScreen() {
         {/* Add ingredient modal */}
         <AddIngredientModal
           visible={isAddModalVisible}
-          onClose={() => setIsAddModalVisible(false)}
+          onClose={() => { setIsAddModalVisible(false); setJustCreatedIngredient(null); }}
           onAdd={handleAddIngredient}
           availableIngredients={availableIngredients}
           existingEntries={pantryEntries}
           onCreateIngredient={handleCreateFromSearch}
+          preselectedIngredient={justCreatedIngredient}
         />
 
         {/* Create new ingredient modal */}
@@ -401,6 +407,8 @@ interface AddIngredientModalProps {
   availableIngredients: Ingredient[];
   existingEntries: PantryEntry[];
   onCreateIngredient?: (searchQuery: string) => void;
+  /** When set, the modal opens straight on the quantity step for this ingredient. */
+  preselectedIngredient?: Ingredient | null;
 }
 
 function AddIngredientModal({
@@ -410,6 +418,7 @@ function AddIngredientModal({
   availableIngredients,
   existingEntries,
   onCreateIngredient,
+  preselectedIngredient,
 }: AddIngredientModalProps) {
   const { t } = useI18n();
   const { colors } = useTheme();
@@ -417,6 +426,16 @@ function AddIngredientModal({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIngredient, setSelectedIngredient] = useState<Ingredient | null>(null);
   const [quantityText, setQuantityText] = useState('');
+
+  // Jump straight to the quantity step when opened with a preselected ingredient
+  // (e.g. right after creating a new one), so the user doesn't search for it again.
+  useEffect(() => {
+    if (visible && preselectedIngredient) {
+      setSelectedIngredient(preselectedIngredient);
+      setSearchQuery('');
+      setQuantityText('');
+    }
+  }, [visible, preselectedIngredient]);
 
   const filteredIngredients = useMemo(() => {
     if (!searchQuery.trim()) return availableIngredients;

@@ -16,7 +16,10 @@ export type MainTabParamList = {
 export type RecipeStackParamList = {
   RecipeList: undefined;
   RecipeDetail: { recipeId: string };
-  RecipeForm: { recipeId?: string }; // undefined = create, string = edit
+  // recipeId: undefined = create, string = edit.
+  // returnToPlanId: when set, saving/going back returns to the plan's
+  // RecipeSelection step (used when creating a recipe from within the plan flow).
+  RecipeForm: { recipeId?: string; returnToPlanId?: string };
 };
 
 /** Pantry stack param list */

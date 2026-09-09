@@ -203,15 +203,26 @@ export function planMeals(input: SmartPlanInput): SmartPlanResult {
               score += 20000;
             }
 
-            // 3. Evaluar solapamiento de ingredientes y categorías (solo si están cerca)
+            // 3. Evaluar solapamiento de ingredientes y categorías (solo si están cerca).
+            //    Se penaliza con fuerza el compartir ingredientes o categoría
+            //    dominante en comidas próximas (p. ej. carne dos días seguidos,
+            //    o patata en comida y cena del mismo día).
             if (dist <= 4) {
                const proximity = (5 - dist) / 4; // De 1 (consecutivo) a 0.25 (a 4 comidas de distancia)
                const similarity = ingredientSimilarity(profile.ingredientIds, otherProfile.ingredientIds);
-               
-               score += similarity * 500 * proximity;
 
-               if (profile.dominantCategory && profile.dominantCategory === otherProfile.dominantCategory && dist <= 2) {
-                 score += 300 * proximity;
+               // Solapamiento de ingredientes concretos: cuanto más comparten y
+               // más cerca están, mayor penalización.
+               score += similarity * 4000 * proximity;
+
+               // Misma categoría dominante (carne/carne, pasta/pasta...) cerca.
+               if (
+                 profile.dominantCategory &&
+                 profile.dominantCategory === otherProfile.dominantCategory
+               ) {
+                 // Penalización fuerte si es consecutivo o el mismo día,
+                 // decreciente con la distancia hasta 4 comidas.
+                 score += (dist <= 2 ? 3000 : 1000) * proximity;
                }
             }
           }

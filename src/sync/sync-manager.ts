@@ -233,7 +233,7 @@ export class SyncManager implements ISyncManager {
     for (const table of this.tables) {
       channel.on(
         'postgres_changes' as any,
-        { event: '*', schema: 'public', table },
+        { event: '*', schema: 'platoplan', table },
         (payload: any) => {
           const eventType = payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE';
           const record = (payload.new ?? payload.old ?? {}) as Record<string, unknown>;

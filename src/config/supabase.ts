@@ -1,7 +1,7 @@
 import 'react-native-url-polyfill/auto';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
@@ -16,6 +16,8 @@ if (!supabaseUrl || !supabaseAnonKey) {
 const isWeb = Platform.OS === 'web';
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  // Todas las apps de Marabunta Labs comparten proyecto de Supabase; cada una vive en su esquema.
+  db: { schema: 'platoplan' },
   auth: {
     storage: AsyncStorage,
     autoRefreshToken: true,
@@ -26,4 +28,4 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     // is handled differently, so we keep URL detection off there.
     detectSessionInUrl: isWeb,
   },
-});
+}) as unknown as SupabaseClient; // sin tipos generados: el esquema fijado no cambia nada para el resto de la app

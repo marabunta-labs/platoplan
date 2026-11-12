@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { 
   View, 
   Text, 
@@ -7,7 +7,7 @@ import {
   SafeAreaView, 
   FlatList 
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { ShoppingStackParamList } from '../../navigation/types';
 import { usePlanning } from '../../hooks';
@@ -23,12 +23,20 @@ export function ShoppingHubScreen() {
   const { t } = useI18n();
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const { history, activePlan } = usePlanning();
+  const { activePlan, loadPlans } = usePlanning();
+  const [allPlans, setAllPlans] = useState<MenuPlan[]>([]);
 
-  // Consolidamos los planes disponibles (historial completo o el activo si no hay historial cargado)
-  const availablePlans = history && history.length > 0 
-    ? history 
-    : (activePlan ? [activePlan] : []);
+  // usePlanning has no plan history, so load every saved plan each time the
+  // hub is focused (otherwise only the single "active" plan would be listed).
+  useFocusEffect(
+    useCallback(() => {
+      loadPlans()
+        .then((plans) => setAllPlans(plans ?? []))
+        .catch(console.error);
+    }, [loadPlans])
+  );
+
+  const availablePlans = allPlans.length > 0 ? allPlans : (activePlan ? [activePlan] : []);
 
   const formatDate = (d: Date | string) => {
     const date = d instanceof Date ? d : new Date(d);

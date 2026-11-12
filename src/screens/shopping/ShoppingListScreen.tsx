@@ -21,6 +21,8 @@ import { MULTI_COLUMN_BREAKPOINT } from '../../components/ResponsiveLayout';
 import { useShoppingList, usePlanning, useRecipes } from '../../hooks';
 import { useI18n } from '../../i18n';
 import { shareText } from '../../utils/share';
+import { classifyItem, reviewStatusOf } from './classifyItem';
+import { categoryPresentation } from '../../constants/ingredient-categories';
 import { exportPdf, escapeHtml } from '../../utils/exportPdf';
 import type { ShoppingStackParamList } from '../../navigation/types';
 
@@ -37,8 +39,7 @@ export function ShoppingListScreen() {
   const route = useRoute<RouteProp<ShoppingStackParamList, 'ShoppingList'>>();
   const navigation = useNavigation();
   
-  // Extraemos 'history' y 'loadPlans' para recargar
-  const { activePlan, loadPlan, history, loadPlans } = usePlanning();
+  const { activePlan, loadPlan, loadPlans } = usePlanning();
   const { shoppingList, loading, editQuantity, removeItem, regenerate, loadByPlanId, generate, confirmPantryQuantity } = useShoppingList();
   const { recipes } = useRecipes();
 
@@ -70,7 +71,7 @@ export function ShoppingListScreen() {
   );
 
   // Usamos los planes recién cargados, o el history si fallan, o el plan activo
-  const availablePlans = allPlans.length > 0 ? allPlans : (history && history.length > 0 ? history : (activePlan ? [activePlan] : []));
+  const availablePlans = allPlans.length > 0 ? allPlans : (activePlan ? [activePlan] : []);
   const currentPlan = availablePlans.find(p => p.id === currentPlanId) || activePlan;
 
   useEffect(() => {
@@ -118,15 +119,11 @@ export function ShoppingListScreen() {
 
     for (const item of allVisibleItems) {
       // Keyed by ingredientId (stable) — item.id changes on every regeneration.
-      const status = reviewedItems[item.ingredientId] || (item.purchaseUnits <= 0 ? 'confirmed' : 'unknown');
-      
-      if (status === 'unknown') {
-        pending.push(item);
-      } else if (status === 'none' || item.purchaseUnits > 0) {
-        toBuy.push(item);
-      } else {
-        done.push(item);
-      }
+      // Everything needs reviewing, including items the pantry already covers.
+      const section = classifyItem(reviewStatusOf(reviewedItems, item.ingredientId), item.purchaseUnits);
+      if (section === 'pending') pending.push(item);
+      else if (section === 'buy') toBuy.push(item);
+      else done.push(item);
     }
 
     const dir = sortDirection === 'asc' ? 1 : -1;
@@ -202,7 +199,7 @@ export function ShoppingListScreen() {
       }
 
       for (const [cat, items] of Object.entries(grouped)) {
-        text += `\n📦 ${cat.toUpperCase()}:\n`;
+        text += `\n${categoryPresentation(cat).emoji} *${cat.toUpperCase()}*\n`;
         for (const item of items) {
           const name = item.ingredient?.name ?? item.ingredientId;
           const unit = item.ingredient?.unit ? (t(`units.${item.ingredient.unit}` as any) || item.ingredient.unit) : '';
@@ -211,7 +208,8 @@ export function ShoppingListScreen() {
             ? `${item.purchaseUnits} × ${purchaseFormat.description} (${purchaseFormat.quantity} ${unit})`
             : `${item.purchaseUnits} ${unit}`;
             
-          text += `  • ${name}: ${formatStr}\n`;
+          // WhatsApp can't render real checkboxes: ⬜ is a visual tick the user can swap for ✅.
+          text += `⬜ ${name}: ${formatStr}\n`;
         }
       }
     }
@@ -250,14 +248,14 @@ export function ShoppingListScreen() {
         const netStr = `${item.netQuantity} ${unit}`.trim();
         return (
           `<li class="sl-item">` +
-            `<span class="sl-name">${name}</span>` +
+            `<span class="sl-box"></span><span class="sl-name">${name}</span>` +
             `<span class="sl-amount">${buyStr} · ${escapeHtml(netStr)}</span>` +
           `</li>`
         );
       }).join('');
       return (
         `<div class="sl-section">` +
-          `<h2>📦 ${escapeHtml(cat)}</h2>` +
+          `<h2>${categoryPresentation(cat).emoji} ${escapeHtml(cat)}</h2>` +
           `<ul class="sl-list">${rows}</ul>` +
         `</div>`
       );
@@ -275,7 +273,8 @@ export function ShoppingListScreen() {
         `.sl-section h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: #C0392B; border-bottom: 2px solid #F5B7B1; padding-bottom: 4px; margin: 0 0 8px; }` +
         `.sl-list { list-style: none; margin: 0; padding: 0; }` +
         `.sl-item { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid #EFECE6; font-size: 13px; break-inside: avoid; }` +
-        `.sl-name { font-weight: 600; color: #1a1a1a; }` +
+        `.sl-box { flex: 0 0 14px; width: 14px; height: 14px; border: 1.5px solid #888; border-radius: 3px; margin-top: 2px; }` +
+        `.sl-name { font-weight: 600; color: #1a1a1a; flex: 1; }` +
         `.sl-amount { color: #666; text-align: right; white-space: nowrap; }` +
       `</style>` +
       sectionsHtml;
@@ -287,9 +286,9 @@ export function ShoppingListScreen() {
   const isWideViewport = width > MULTI_COLUMN_BREAKPOINT;
 
   const renderShoppingItem = ({ item }: { item: ShoppingListItem }) => {
-    const status = reviewedItems[item.ingredientId] || (item.purchaseUnits <= 0 ? 'confirmed' : 'unknown');
+    const status = reviewStatusOf(reviewedItems, item.ingredientId);
     return (
-      <View style={[{ opacity: item.purchaseUnits <= 0 ? 0.6 : 1 }, isWideViewport && styles.gridItemContainer]}>
+      <View style={[{ opacity: status !== 'unknown' && item.purchaseUnits <= 0 ? 0.6 : 1 }, isWideViewport && styles.gridItemContainer]}>
         <ShoppingItem
           item={item}
           pantryStatus={status}

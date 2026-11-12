@@ -19,7 +19,8 @@ function slugify(title: string): string {
 }
 
 function downloadAsFile(title: string, text: string): void {
-  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  // BOM so editors/Notepad detect UTF-8 and show the emojis instead of mojibake.
+  const blob = new Blob(['\uFEFF', text], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;

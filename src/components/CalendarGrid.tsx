@@ -3,6 +3,8 @@ import { View, Text, Pressable, ScrollView, StyleSheet, Platform, TouchableOpaci
 import type { MenuPlan, Recipe } from '../models/types';
 import type { MealSlot } from '../models/enums';
 import { useI18n } from '../i18n';
+import { getRecipeEmoji } from '../utils/recipeEmoji';
+import { groupUnassigned, type UnassignedGroupKey } from './unassignedGroups';
 import { useTheme } from '../context/ThemeContext';
 import type { ThemeColors } from '../constants/theme';
 
@@ -65,6 +67,10 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
   recipes = [],
   draggingSlot = null,
   onMove,
+  unassignedRecipes = [],
+  onMoveToUnassigned,
+  onMoveFromUnassigned,
+  onDeleteDragged,
   onPickUp,
   onCancelPickUp,
   orientation = 'vertical',
@@ -86,7 +92,8 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
   const getRecipeName = (dayIndex: number, slot: MealSlot): string | null => {
     const assignment = plan.assignments.find((a) => a.dayIndex === dayIndex && a.slot === slot);
     if (!assignment) return null;
-    return assignment.recipe?.name ?? recipesById.get(assignment.recipeId)?.name ?? null;
+    const recipe = assignment.recipe ?? recipesById.get(assignment.recipeId);
+    return recipe ? `${getRecipeEmoji(recipe)} ${recipe.name}` : null;
   };
 
   const isFreeSlot = (dayIndex: number, slot: MealSlot) =>
@@ -97,9 +104,33 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
   const isDragging = (dayIndex: number, slot: MealSlot) =>
     !!draggingSlot && !('isUnassigned' in draggingSlot) && draggingSlot.day === dayIndex && draggingSlot.slot === slot;
 
+  const pickedFromDrawer = !!draggingSlot && 'isUnassigned' in draggingSlot;
+  const draggedRecipe = draggingSlot
+    ? ('isUnassigned' in draggingSlot
+        ? (unassignedRecipes[draggingSlot.index] ?? unassignedRecipes.find((r) => r.id === draggingSlot.recipeId))
+        : (() => {
+            const a = plan.assignments.find((x) => x.dayIndex === draggingSlot.day && x.slot === draggingSlot.slot);
+            return a ? (a.recipe ?? recipesById.get(a.recipeId)) : undefined;
+          })())
+    : undefined;
+  const unassignedGroups = useMemo(() => groupUnassigned(unassignedRecipes), [unassignedRecipes]);
+  const groupTitle = (key: UnassignedGroupKey) =>
+    key === 'comida'
+      ? `🍽️ ${t('planning.unassignedLunches')}`
+      : key === 'cena'
+        ? `🌙 ${t('planning.unassignedDinners')}`
+        : `🍴 ${t('planning.unassignedEither')}`;
+
   const handlePress = (dayIndex: number, slot: MealSlot) => {
     if (draggingSlot) {
-      if ('isUnassigned' in draggingSlot) return;
+      if ('isUnassigned' in draggingSlot) {
+        const mismatch = draggedRecipe?.mealType && draggedRecipe.mealType !== 'ambas' && draggedRecipe.mealType !== slot;
+        if (!mismatch) {
+          onMoveFromUnassigned?.(draggingSlot.recipeId, { day: dayIndex, slot }, draggingSlot.index);
+          onCancelPickUp?.();
+        }
+        return;
+      }
       if (isDragging(dayIndex, slot)) {
         onCancelPickUp?.();
       } else {
@@ -114,7 +145,21 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
     <View style={styles.wrapper}>
       {draggingSlot && (
         <View style={styles.moveHint}>
-          <Text style={styles.moveHintText}>{t('planning.moveHint')}</Text>
+          <Text style={styles.moveHintText} numberOfLines={2}>
+            {draggedRecipe?.name ? t('planning.moveHintNamed', { name: draggedRecipe.name }) : t('planning.moveHint')}
+          </Text>
+          <View style={styles.moveHintActions}>
+            <TouchableOpacity
+              style={styles.deleteButton}
+              onPress={() => onDeleteDragged?.(draggingSlot)}
+              accessibilityRole="button"
+            >
+              <Text style={styles.deleteButtonText}>🗑️ {t('planning.deleteZone')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.cancelButton} onPress={() => onCancelPickUp?.()} accessibilityRole="button">
+              <Text style={styles.cancelButtonText}>{t('common.cancel')}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
 
@@ -165,6 +210,7 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
                         key={slot}
                         style={[
                           styles.slotCard,
+                          pickedFromDrawer && draggedRecipe?.mealType && draggedRecipe.mealType !== 'ambas' && draggedRecipe.mealType !== slot && styles.slotCardBlocked,
                           free && styles.slotCardFree,
                           empty && styles.slotCardEmpty,
                           dragging && styles.slotCardDragging,
@@ -175,7 +221,9 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
                         {...dragProps(movable, {
                           onDragStart: () => onPickUp?.({ day: dayIndex, slot }),
                           onDragEnd: () => onCancelPickUp?.(),
-                          onDrop: () => draggingSlot && onMove?.(draggingSlot, { day: dayIndex, slot }),
+                          onDrop: () => {
+            if (draggingSlot && !('isUnassigned' in draggingSlot)) onMove?.(draggingSlot, { day: dayIndex, slot });
+          },
                         })}
                       >
                         <View style={styles.slotHeader}>
@@ -205,6 +253,55 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
           );
         })}
       </ScrollView>
+
+      {/* "Unassigned" tray: tap a meal in the calendar to pick it up, then tap
+          here to set it aside; tap a card here to pick it up and place it. */}
+      <Pressable
+        style={[styles.tray, draggingSlot && !pickedFromDrawer && styles.trayActive]}
+        onPress={() => {
+          if (draggingSlot && !('isUnassigned' in draggingSlot)) {
+            onMoveToUnassigned?.(draggingSlot);
+            onCancelPickUp?.();
+          }
+        }}
+        accessibilityRole="button"
+      >
+        <Text style={styles.trayTitle}>
+          📥 {t('planning.unassignedTitle')}
+          {unassignedRecipes.length > 0 ? `  (${unassignedRecipes.length})` : ''}
+        </Text>
+        {unassignedRecipes.length === 0 ? (
+          <Text style={styles.trayEmpty}>
+            {draggingSlot && !pickedFromDrawer ? t('planning.unassignedDropHere') : t('planning.unassignedEmpty')}
+          </Text>
+        ) : (
+          <ScrollView style={styles.trayScroll} nestedScrollEnabled>
+            {unassignedGroups.map((group) => (
+              <View key={group.key} style={styles.trayGroup}>
+                <Text style={styles.trayGroupTitle}>{groupTitle(group.key)}</Text>
+                <View style={styles.trayChips}>
+                  {group.items.map(({ recipe, index }) => {
+                    const picked = !!draggingSlot && 'isUnassigned' in draggingSlot && draggingSlot.index === index;
+                    return (
+                      <TouchableOpacity
+                        key={`${recipe.id}-${index}`}
+                        style={[styles.chip, picked && styles.chipPicked]}
+                        onPress={() => {
+                          if (picked) onCancelPickUp?.();
+                          else if (!draggingSlot) onPickUp?.({ isUnassigned: true, recipeId: recipe.id, index });
+                        }}
+                        accessibilityRole="button"
+                      >
+                        <Text style={styles.chipText} numberOfLines={1}>{getRecipeEmoji(recipe)} {recipe.name}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            ))}
+          </ScrollView>
+        )}
+      </Pressable>
     </View>
   );
 };
@@ -217,6 +314,23 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   moveHint: { backgroundColor: colors.accentSoft, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, marginHorizontal: 12, marginBottom: 8 },
   moveHintText: { fontSize: 13, color: colors.accentText },
   
+  moveHintActions: { flexDirection: 'row', gap: 8, marginTop: 6 },
+  deleteButton: { backgroundColor: colors.dangerBg, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
+  deleteButtonText: { color: colors.dangerText, fontSize: 12, fontWeight: '600' },
+  cancelButton: { backgroundColor: colors.accent, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
+  cancelButtonText: { color: colors.textInverse, fontSize: 12, fontWeight: '600' },
+  slotCardBlocked: { opacity: 0.3 },
+  tray: { marginHorizontal: 12, marginTop: 8, marginBottom: 8, padding: 10, borderWidth: 2, borderStyle: 'dashed', borderColor: colors.border, borderRadius: 8, backgroundColor: colors.card, maxHeight: '34%' },
+  trayActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
+  trayTitle: { fontSize: 12, fontWeight: '700', color: colors.textMuted, textTransform: 'uppercase' },
+  trayEmpty: { fontSize: 13, color: colors.textFaint, fontStyle: 'italic', marginTop: 4 },
+  trayScroll: { marginTop: 6 },
+  trayGroup: { marginBottom: 6 },
+  trayGroupTitle: { fontSize: 11, fontWeight: '700', color: colors.textFaint },
+  trayChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 },
+  chip: { maxWidth: 170, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 9, paddingHorizontal: 10, paddingVertical: 7 },
+  chipPicked: { borderColor: colors.accent, borderWidth: 2, backgroundColor: colors.accentSoft },
+  chipText: { fontSize: 13, color: colors.text },
   dayWrapper: { marginBottom: 8 },
   dayWrapperHorizontal: { width: 140, marginRight: 12, marginBottom: 0 },
   

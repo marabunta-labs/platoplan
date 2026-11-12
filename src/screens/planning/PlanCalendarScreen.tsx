@@ -21,12 +21,13 @@ import {
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import type { PlanningStackParamList } from '../../navigation/types';
 import type { MenuPlan, Recipe } from '../../models/types';
 import type { MealSlot } from '../../models/enums';
 import { CalendarGrid, ConfirmDialog, type SlotRef } from '../../components';
-import { usePlanning, useRecipes } from '../../hooks';
+import { usePlanning, useRecipes, useIngredients } from '../../hooks';
 import { useI18n } from '../../i18n';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../constants/theme';
@@ -34,6 +35,11 @@ import { AlertCompat } from '../../utils/alert';
 import { shareText } from '../../utils/share';
 import { exportPdf, escapeHtml } from '../../utils/exportPdf';
 import { confirmLeavePlan } from './confirmLeavePlan';
+import { buildPlanText } from '../../utils/planText';
+import { getRecipeEmoji } from '../../utils/recipeEmoji';
+import { planMealsBest } from '../../services/smart-distribution';
+import { pushSnapshot, popSnapshot, type PlanSnapshot } from './undoStack';
+import { loadUnassigned, saveUnassigned } from '../../utils/unassignedStore';
 
 type ScreenRoute = RouteProp<PlanningStackParamList, 'PlanCalendar'>;
 
@@ -41,20 +47,21 @@ export function PlanCalendarScreen() {
   const { t, locale } = useI18n();
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const navigation = useNavigation();
+  const navigation = useNavigation<NativeStackNavigationProp<PlanningStackParamList, 'PlanCalendar'>>();
   const route = useRoute<ScreenRoute>();
   const { planId } = route.params;
 
   const {
     activePlan,
-    loading,
     loadPlan,
     updatePlan,
     applyDistribution,
     assignRecipe: assignRecipeService,
     markFreeDay,
+    unmarkFreeSlot,
   } = usePlanning();
   const { recipes } = useRecipes();
+  const { ingredients } = useIngredients();
 
   const [plan, setPlan] = useState<MenuPlan | null>(null);
 
@@ -70,6 +77,36 @@ export function PlanCalendarScreen() {
 
   const [draggingSlot, setDraggingSlot] = useState<SlotRef | { isUnassigned: true; recipeId: string; index: number } | null>(null);
   const [unassignedRecipeIds, setUnassignedRecipeIds] = useState<string[]>([]);
+  const [unassignedHydrated, setUnassignedHydrated] = useState(false);
+  const [undoStack, setUndoStack] = useState<PlanSnapshot[]>([]);
+
+  // Restore the drawer saved for this plan, and keep it saved afterwards.
+  useEffect(() => {
+    let cancelled = false;
+    setUnassignedHydrated(false);
+    loadUnassigned(planId).then((ids) => {
+      if (cancelled) return;
+      setUnassignedRecipeIds(ids);
+      setUnassignedHydrated(true);
+    });
+    return () => { cancelled = true; };
+  }, [planId]);
+
+  useEffect(() => {
+    if (unassignedHydrated) void saveUnassigned(planId, unassignedRecipeIds);
+  }, [planId, unassignedHydrated, unassignedRecipeIds]);
+
+  // Drop drawer entries whose recipe no longer exists: the grid only renders
+  // existing recipes, and indexes must stay aligned with this array.
+  useEffect(() => {
+    if (!unassignedHydrated || recipes.length === 0) return;
+    setUnassignedRecipeIds((prev) => {
+      const known = new Set(recipes.map((r) => r.id));
+      const next = prev.filter((id) => known.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [unassignedHydrated, recipes]);
+
   const [orientation, setOrientation] = useState<'vertical' | 'horizontal'>('vertical');
   
   const [showDoneOptions, setShowDoneOptions] = useState(false);
@@ -93,6 +130,7 @@ export function PlanCalendarScreen() {
     slot: MealSlot;
     recipe: Recipe;
     conflictMessage: string;
+    fromDrawer?: boolean;
   } | null>(null);
   const [pendingMove, setPendingMove] = useState<{ from: SlotRef; to: SlotRef; clearsFree?: boolean } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<SlotRef | { isUnassigned: true; recipeId: string; index: number } | null>(null);
@@ -110,73 +148,8 @@ export function PlanCalendarScreen() {
 
   const handleExport = useCallback(() => {
     if (!plan) return;
-
-    const startDate = plan.startDate instanceof Date ? plan.startDate : new Date(plan.startDate);
-    const endDate = new Date(startDate);
-    endDate.setDate(endDate.getDate() + plan.periodDays - 1);
-
-    const startStr = `${String(startDate.getDate()).padStart(2, '0')}/${String(startDate.getMonth() + 1).padStart(2, '0')}`;
-    const endStr = `${String(endDate.getDate()).padStart(2, '0')}/${String(endDate.getMonth() + 1).padStart(2, '0')}`;
-
-    let text = `🗓️ Plan de Menú (${startStr} - ${endStr})\n`;
-    if (plan.name) text += `🏷️ ${plan.name}\n`;
-    text += `👥 Para ${plan.servings} persona(s)\n\n`;
-    
-    const elaborateReminders: string[] = [];
-
-    for (let day = 0; day < plan.periodDays; day++) {
-      const dayLabel = formatExportDate(startDate, day);
-      text += `${dayLabel}:\n`;
-      
-      if (plan.dayNotes?.[day.toString()]) {
-        text += `  📝 Nota del día: ${plan.dayNotes[day.toString()]}\n`;
-      }
-
-      const lunchAssignment = plan.assignments.find((a) => a.dayIndex === day && a.slot === 'comida');
-      const dinnerAssignment = plan.assignments.find((a) => a.dayIndex === day && a.slot === 'cena');
-      const freeDay = plan.freeDays.find((fd) => fd.dayIndex === day);
-
-      if (freeDay && (freeDay.type === 'comida' || freeDay.type === 'ambas')) {
-        text += `  🍽️ Comida: Libre\n`;
-      } else if (lunchAssignment) {
-        const recipeName = lunchAssignment.recipe?.name ?? recipes.find((r) => r.id === lunchAssignment.recipeId)?.name ?? 'Sin asignar';
-        text += `  🍽️ Comida: ${recipeName}\n`;
-        if (plan.mealNotes?.[`${day}:comida`]) text += `      (Nota: ${plan.mealNotes[`${day}:comida`]}\n`;
-        
-        const recipeData = lunchAssignment.recipe ?? recipes.find((r) => r.id === lunchAssignment.recipeId);
-        if (recipeData?.prepTime === 'elaborado' && day > 0) {
-          const prevDayLabel = formatExportDate(startDate, day - 1);
-          elaborateReminders.push(`- ${prevDayLabel}: Preparar "${recipeName}" (elaborado) para ${dayLabel.split(' ')[0]}`);
-        }
-      } else {
-        text += `  🍽️ Comida: Sin asignar\n`;
-      }
-
-      if (freeDay && (freeDay.type === 'cena' || freeDay.type === 'ambas')) {
-        text += `  🌙 Cena: Libre\n`;
-      } else if (dinnerAssignment) {
-        const recipeName = dinnerAssignment.recipe?.name ?? recipes.find((r) => r.id === dinnerAssignment.recipeId)?.name ?? 'Sin asignar';
-        text += `  🌙 Cena: ${recipeName}\n`;
-        if (plan.mealNotes?.[`${day}:cena`]) text += `      (Nota: ${plan.mealNotes[`${day}:cena`]}\n`;
-        
-        const recipeData = dinnerAssignment.recipe ?? recipes.find((r) => r.id === dinnerAssignment.recipeId);
-        if (recipeData?.prepTime === 'elaborado' && day > 0) {
-          const prevDayLabel = formatExportDate(startDate, day - 1);
-          elaborateReminders.push(`- ${prevDayLabel}: Preparar "${recipeName}" (elaborado) para ${dayLabel.split(' ')[0]}`);
-        }
-      } else {
-        text += `  🌙 Cena: Sin asignar\n`;
-      }
-      text += '\n';
-    }
-
-    if (elaborateReminders.length > 0) {
-      text += `⚠️ Preparar con antelación:\n`;
-      text += elaborateReminders.join('\n');
-      text += '\n';
-    }
-
-    shareText('Plan de Menú', text.trim());
+    const text = buildPlanText({ plan, recipes, emojiFor: (r) => getRecipeEmoji(r) });
+    shareText('Plan de Menú', text);
     setShowDoneOptions(false);
   }, [plan, recipes]);
 
@@ -210,7 +183,7 @@ export function PlanCalendarScreen() {
       const recipeData = assignment.recipe ?? recipes.find((r) => r.id === assignment.recipeId);
       const name = recipeName(assignment.recipeId, assignment.recipe);
       const complex = recipeData?.prepTime === 'elaborado' ? ' card-complex' : '';
-      return `<div class="card${complex}"><div class="card-label">${slotLabel}</div><div class="card-value">${escapeHtml(name)}</div>${noteHtml}</div>`;
+      return `<div class="card${complex}"><div class="card-label">${slotLabel}</div><div class="card-value">${escapeHtml(getRecipeEmoji(recipeData))} ${escapeHtml(name)}</div>${noteHtml}</div>`;
     };
 
     const elaborateReminders: string[] = [];
@@ -333,6 +306,27 @@ export function PlanCalendarScreen() {
     setPickerVisible(true);
   }, []);
 
+  const pushUndo = useCallback(() => {
+    if (!plan) return;
+    const snapshot: PlanSnapshot = {
+      assignments: plan.assignments.map((a) => ({ dayIndex: a.dayIndex, slot: a.slot, recipeId: a.recipeId })),
+      freeDays: plan.freeDays.map((fd) => ({ dayIndex: fd.dayIndex, type: fd.type })),
+      mealNotes: { ...(plan.mealNotes ?? {}) },
+      unassigned: [...unassignedRecipeIds],
+    };
+    setUndoStack((prev) => pushSnapshot(prev, snapshot));
+  }, [plan, unassignedRecipeIds]);
+
+  const handleUndo = useCallback(async () => {
+    const { stack, snapshot } = popSnapshot(undoStack);
+    if (!snapshot || !plan) return;
+    setUndoStack(stack);
+    setUnassignedRecipeIds(snapshot.unassigned);
+    // Free slots first (changing them prunes assignments), then the exact assignments.
+    await updatePlan(plan.id, { freeDays: snapshot.freeDays, mealNotes: snapshot.mealNotes } as any);
+    await applyDistribution(plan.id, snapshot.assignments);
+  }, [undoStack, plan, updatePlan, applyDistribution]);
+
   // Picks up the meal in the currently-selected slot for tap-to-move, and
   // closes the picker so the user can tap a destination slot.
   const handleMoveSelected = useCallback(() => {
@@ -342,21 +336,29 @@ export function PlanCalendarScreen() {
     setSelectedSlot(null);
   }, [selectedSlot]);
 
-  const handleRecipePick = useCallback((recipe: Recipe) => {
+  const handleRecipePick = useCallback((recipe: Recipe, fromDrawer = false) => {
     if (!selectedSlot) return;
     const conflict = checkConflict(selectedSlot.day, selectedSlot.slot, recipe.id);
     if (conflict) {
-      setPendingAssignment({ day: selectedSlot.day, slot: selectedSlot.slot, recipe, conflictMessage: conflict });
+      setPendingAssignment({ day: selectedSlot.day, slot: selectedSlot.slot, recipe, conflictMessage: conflict, fromDrawer });
       setPickerVisible(false);
       setConflictDialogVisible(true);
     } else {
-      applyReassignment(selectedSlot.day, selectedSlot.slot, recipe);
+      applyReassignment(selectedSlot.day, selectedSlot.slot, recipe, fromDrawer);
       setPickerVisible(false);
       setSelectedSlot(null);
     }
   }, [selectedSlot, checkConflict, applyReassignment]);
 
-  function applyReassignment(day: number, slot: MealSlot, recipe: Recipe) {
+  async function applyReassignment(day: number, slot: MealSlot, recipe: Recipe, fromDrawer = false) {
+    pushUndo();
+    // Taking a recipe out of the "unassigned" drawer must also remove it from there.
+    if (fromDrawer) {
+      setUnassignedRecipeIds((prev) => {
+        const i = prev.indexOf(recipe.id);
+        return i >= 0 ? prev.filter((_, idx) => idx !== i) : prev;
+      });
+    }
     setPlan((prev) => {
       if (!prev) return prev;
       const existing = prev.assignments.find((a) => a.dayIndex === day && a.slot === slot);
@@ -365,7 +367,11 @@ export function PlanCalendarScreen() {
         : [...prev.assignments, { id: `pending-${day}-${slot}`, planId: prev.id, dayIndex: day, slot, recipeId: recipe.id, recipe }];
       return { ...prev, assignments: updatedAssignments, updatedAt: new Date() };
     });
-    if (plan) assignRecipeService(plan.id, day, slot, recipe.id);
+    if (!plan) return;
+    // Assigning onto a slot marked "not needed" turns it back into a normal slot.
+    const slotIsFree = plan.freeDays.some((fd) => fd.dayIndex === day && (fd.type === slot || fd.type === 'ambas'));
+    if (slotIsFree) await unmarkFreeSlot(plan.id, day, slot);
+    await assignRecipeService(plan.id, day, slot, recipe.id);
   }
 
   const handleSaveNote = async () => {
@@ -436,6 +442,7 @@ export function PlanCalendarScreen() {
       return;
     }
 
+    pushUndo();
     // INTERCAMBIAR LAS NOTAS DE COMIDA
     const fromKey = `${from.day}:${from.slot}`;
     const toKey = `${to.day}:${to.slot}`;
@@ -449,6 +456,10 @@ export function PlanCalendarScreen() {
     if (fromNote) newMealNotes[toKey] = fromNote;
     else delete newMealNotes[toKey];
 
+    // The user confirmed placing a meal on a slot marked "not needed": make it
+    // a normal slot again, otherwise it would stay both free and assigned.
+    if (isTargetFree) await unmarkFreeSlot(plan.id, to.day, to.slot);
+
     // Aplicar los cambios en local de forma inmediata
     setPlan((prev) => prev ? { ...prev, mealNotes: newMealNotes } : prev);
     updatePlan(plan.id, { mealNotes: newMealNotes } as any).catch(console.error);
@@ -458,13 +469,14 @@ export function PlanCalendarScreen() {
     next.push({ dayIndex: to.day, slot: to.slot, recipeId: source.recipeId });
     if (target) next.push({ dayIndex: from.day, slot: from.slot, recipeId: target.recipeId });
     await applyDistribution(plan.id, next);
-  }, [plan, recipes, applyDistribution, updatePlan, t]);
+  }, [plan, recipes, applyDistribution, updatePlan, unmarkFreeSlot, pushUndo, t]);
 
   const handleMoveToUnassigned = useCallback(async (from: SlotRef) => {
     if (!plan) return;
     const source = plan.assignments.find((a) => a.dayIndex === from.day && a.slot === from.slot);
     if (!source) return;
 
+    pushUndo();
     // Limpiamos la nota si la receta se devuelve al cajón "Sin Asignar"
     const fromKey = `${from.day}:${from.slot}`;
     if (plan.mealNotes && plan.mealNotes[fromKey]) {
@@ -478,13 +490,16 @@ export function PlanCalendarScreen() {
     // Allow the same recipe to sit in the drawer more than once (e.g. the same
     // dish removed from two different days), so we always append a new instance.
     setUnassignedRecipeIds((prev) => [...prev, source.recipeId]);
-  }, [plan, applyDistribution, updatePlan]);
+  }, [plan, applyDistribution, updatePlan, pushUndo]);
 
   const handleMoveFromUnassigned = useCallback(async (recipeId: string, to: SlotRef, index?: number) => {
     if (!plan) return;
     const recipe = recipes.find((item) => item.id === recipeId);
     if (!recipe || (recipe.mealType !== 'ambas' && recipe.mealType !== to.slot)) return;
     const target = plan.assignments.find((a) => a.dayIndex === to.day && a.slot === to.slot);
+    pushUndo();
+    const targetIsFree = plan.freeDays.some((fd) => fd.dayIndex === to.day && (fd.type === to.slot || fd.type === 'ambas'));
+    if (targetIsFree) await unmarkFreeSlot(plan.id, to.day, to.slot);
     const next = plan.assignments.filter((a) => a.id !== target?.id).map((a) => ({ dayIndex: a.dayIndex, slot: a.slot, recipeId: a.recipeId }));
     next.push({ dayIndex: to.day, slot: to.slot, recipeId });
     await applyDistribution(plan.id, next);
@@ -496,7 +511,7 @@ export function PlanCalendarScreen() {
         : (() => { const i = prev.indexOf(recipeId); return i >= 0 ? prev.filter((_, idx) => idx !== i) : prev; })();
       return target ? [...withoutInstance, target.recipeId] : withoutInstance;
     });
-  }, [plan, recipes, applyDistribution]);
+  }, [plan, recipes, applyDistribution, unmarkFreeSlot, pushUndo]);
 
   // Dropping on the trash asks for confirmation first (keep the picked item
   // around until the user confirms or cancels).
@@ -514,6 +529,7 @@ export function PlanCalendarScreen() {
     setPendingDelete(null);
     setDraggingSlot(null);
     if (!plan || !target) return;
+    pushUndo();
     if ('isUnassigned' in target) {
       // Remove exactly that instance from the drawer.
       setUnassignedRecipeIds((prev) =>
@@ -534,7 +550,7 @@ export function PlanCalendarScreen() {
       updatePlan(plan.id, { mealNotes: newMealNotes } as any).catch(console.error);
     }
     await applyDistribution(plan.id, plan.assignments.filter((a) => a.id !== source.id).map((a) => ({ dayIndex: a.dayIndex, slot: a.slot, recipeId: a.recipeId })));
-  }, [pendingDelete, plan, applyDistribution, updatePlan]);
+  }, [pendingDelete, plan, applyDistribution, updatePlan, pushUndo]);
 
   // Human-readable name of whatever is pending deletion, for the confirm dialog.
   const pendingDeleteName = useMemo(() => {
@@ -560,6 +576,46 @@ export function PlanCalendarScreen() {
     return count;
   }, [plan]);
 
+  // Re-runs the smart distribution with the recipes currently in the calendar,
+  // producing a fresh arrangement (randomised tie-breaks) after confirmation.
+  const runRecalculate = useCallback(async () => {
+    if (!plan) return;
+    pushUndo();
+    const recipesById = new Map(recipes.map((r) => [r.id, r]));
+    const selectionsFor = (slot: MealSlot) => {
+      const counts = new Map<string, number>();
+      plan.assignments.filter((a) => a.slot === slot).forEach((a) => counts.set(a.recipeId, (counts.get(a.recipeId) ?? 0) + 1));
+      return [...counts.entries()]
+        .map(([recipeId, count]) => {
+          const recipe = recipesById.get(recipeId);
+          return recipe ? { recipeId, recipe, count } : null;
+        })
+        .filter((s): s is NonNullable<typeof s> => s !== null);
+    };
+    const result = planMealsBest({
+      periodDays: plan.periodDays,
+      freeDays: plan.freeDays,
+      elaborateDays: plan.elaborateDays,
+      lunchSelections: selectionsFor('comida'),
+      dinnerSelections: selectionsFor('cena'),
+      ingredientsById: new Map(ingredients.map((i) => [i.id, i])),
+    }, 12, Math.random, false); // skip the deterministic variant so each press changes the layout
+    // Notes are tied to a day/slot, not to a meal, so they would end up on the wrong dish.
+    if (plan.mealNotes && Object.keys(plan.mealNotes).length > 0) {
+      await updatePlan(plan.id, { mealNotes: {} } as any);
+    }
+    const applied = await applyDistribution(plan.id, result.assignments);
+    if (!applied.success) AlertCompat.alert(t('common.error'), t('common.retry'));
+    else setWarnings([]);
+  }, [plan, recipes, ingredients, applyDistribution, updatePlan, pushUndo, t]);
+
+  const handleRecalculate = useCallback(() => {
+    AlertCompat.alert(t('planning.recalculateTitle'), t('planning.recalculateMessage'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      { text: t('planning.recalculateConfirm'), onPress: () => void runRecalculate() },
+    ]);
+  }, [runRecalculate, t]);
+
   const handleFinishPress = useCallback(async () => {
     if (!plan) return;
     await updatePlan(plan.id, { status: 'confirmed', allowGaps: true });
@@ -568,7 +624,7 @@ export function PlanCalendarScreen() {
 
   const handleConfirmConflict = useCallback(() => {
     if (pendingAssignment) {
-      applyReassignment(pendingAssignment.day, pendingAssignment.slot, pendingAssignment.recipe);
+      applyReassignment(pendingAssignment.day, pendingAssignment.slot, pendingAssignment.recipe, pendingAssignment.fromDrawer);
       setWarnings((prev) => [...prev, `Día ${pendingAssignment.day + 1}: ${pendingAssignment.conflictMessage}`]);
     }
     setConflictDialogVisible(false);
@@ -590,27 +646,32 @@ export function PlanCalendarScreen() {
 
   const handleRemoveSelected = useCallback(async () => {
     if (!plan || !selectedSlot) return;
+    pushUndo();
     const next = plan.assignments.filter((a) => !(a.dayIndex === selectedSlot.day && a.slot === selectedSlot.slot)).map((a) => ({ dayIndex: a.dayIndex, slot: a.slot, recipeId: a.recipeId }));
     await applyDistribution(plan.id, next);
     handleClosePicker();
-  }, [plan, selectedSlot, applyDistribution, handleClosePicker]);
+  }, [plan, selectedSlot, applyDistribution, handleClosePicker, pushUndo]);
 
   const handleMarkSelectedFree = useCallback(async () => {
     if (!plan || !selectedSlot) return;
+    pushUndo();
     const current = plan.freeDays.find((fd) => fd.dayIndex === selectedSlot.day);
     const nextType = current?.type === 'comida' || current?.type === 'cena' ? 'ambas' : selectedSlot.slot;
     const next = plan.assignments.filter((a) => !(a.dayIndex === selectedSlot.day && a.slot === selectedSlot.slot)).map((a) => ({ dayIndex: a.dayIndex, slot: a.slot, recipeId: a.recipeId }));
     await applyDistribution(plan.id, next);
     await markFreeDay(plan.id, selectedSlot.day, nextType);
     handleClosePicker();
-  }, [plan, selectedSlot, applyDistribution, markFreeDay, handleClosePicker]);
+  }, [plan, selectedSlot, applyDistribution, markFreeDay, handleClosePicker, pushUndo]);
 
   const confirmMove = useCallback(() => {
     if (pendingMove) handleMove(pendingMove.from, pendingMove.to, true);
     setPendingMove(null);
   }, [pendingMove, handleMove]);
 
-  if (loading || !plan) {
+  // Only block on the very first load. Every move/assign toggles the hook's
+  // `loading` flag, and swapping the calendar for a spinner there unmounted the
+  // grid mid-interaction (losing scroll position and the drag in progress).
+  if (!plan) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -650,6 +711,18 @@ export function PlanCalendarScreen() {
           <View style={styles.headerActions}>
             <TouchableOpacity style={styles.pdfButton} onPress={() => setExportChoiceVisible(true)} accessibilityRole="button" accessibilityLabel={t('planning.exportPlan')}>
               <Text style={styles.pdfButtonText}>📤 {t('planning.exportPlan')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.orientationButton, undoStack.length === 0 && styles.buttonDisabled]}
+              onPress={handleUndo}
+              disabled={undoStack.length === 0}
+              accessibilityRole="button"
+              accessibilityLabel={t('planning.undo')}
+            >
+              <Text style={styles.orientationButtonText}>↩ {t('planning.undo')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.orientationButton} onPress={handleRecalculate} accessibilityRole="button" accessibilityLabel={t('planning.recalculate')}>
+              <Text style={styles.orientationButtonText}>🔄 {t('planning.recalculate')}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.orientationButton} onPress={() => setOrientation((val) => val === 'vertical' ? 'horizontal' : 'vertical')} accessibilityRole="button">
               <Text style={styles.orientationButtonText}>{orientation === 'vertical' ? `↔ ${t('planning.horizontal')}` : `↕ ${t('planning.vertical')}`}</Text>
@@ -812,9 +885,9 @@ export function PlanCalendarScreen() {
                       <TouchableOpacity
                         key={`${item.id}-${idx}`}
                         style={[styles.pickerItem, styles.pickerItemUnassigned]}
-                        onPress={() => handleRecipePick(item)}
+                        onPress={() => handleRecipePick(item, true)}
                       >
-                        <Text style={styles.pickerItemName}>{item.name}</Text>
+                        <Text style={styles.pickerItemName}>{getRecipeEmoji(item)} {item.name}</Text>
                         <Text style={styles.pickerItemMeta}>
                           {item.prepTime === 'elaborado' ? `👨‍🍳 ${t('prepTimes.elaborado')}` : `⚡ ${t('prepTimes.rapido')}`}
                         </Text>
@@ -826,7 +899,7 @@ export function PlanCalendarScreen() {
               }
               renderItem={({ item }) => (
                 <TouchableOpacity style={styles.pickerItem} onPress={() => handleRecipePick(item)}>
-                  <Text style={styles.pickerItemName}>{item.name}</Text>
+                  <Text style={styles.pickerItemName}>{getRecipeEmoji(item)} {item.name}</Text>
                   <Text style={styles.pickerItemMeta}>
                     {item.prepTime === 'elaborado' ? `👨‍🍳 ${t('prepTimes.elaborado')}` : `⚡ ${t('prepTimes.rapido')}`}
                   </Text>
@@ -900,7 +973,8 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   subtitle: { fontSize: 14, color: colors.textFaint },
   orientationButton: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: colors.accentSoft },
   orientationButtonText: { color: colors.accent, fontSize: 12, fontWeight: '600' },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  buttonDisabled: { opacity: 0.4 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', flex: 1, gap: 8 },
   pdfButton: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: colors.successBg },
   pdfButtonText: { color: colors.successText, fontSize: 12, fontWeight: '600' },
   footer: { paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.background },

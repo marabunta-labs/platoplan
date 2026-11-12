@@ -1,10 +1,13 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { MenuPlan, Recipe } from '../models/types';
 import type { MealSlot } from '../models/enums';
 import { useI18n } from '../i18n';
 import { FONT_FAMILY } from '../constants/typography';
 import { useTheme } from '../context/ThemeContext';
 import type { ThemeColors } from '../constants/theme';
+import { getRecipeEmoji } from '../utils/recipeEmoji';
+import { computeAutoScrollDelta } from './dragAutoScroll';
+import { groupUnassigned, type UnassignedGroupKey } from './unassignedGroups';
 
 export interface SlotRef { day: number; slot: MealSlot; }
 
@@ -59,6 +62,12 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const isHorizontal = orientation === 'horizontal';
+
+  // Scrollable calendar area + last known pointer position during a drag, used
+  // to auto-scroll when the wanted row is out of view.
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const pointerRef = useRef<{ x: number; y: number } | null>(null);
+  const [hoverKey, setHoverKey] = useState<string | null>(null);
 
   const startDate = useMemo(() => plan.startDate instanceof Date ? plan.startDate : new Date(plan.startDate), [plan.startDate]);
   const recipesById = useMemo(() => new Map(recipes.map((recipe) => [recipe.id, recipe])), [recipes]);
@@ -115,6 +124,29 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
 
   const isPicking = !!draggingSlot;
 
+  useEffect(() => {
+    if (!isPicking) {
+      pointerRef.current = null;
+      setHoverKey(null);
+      return;
+    }
+    const timer = setInterval(() => {
+      const el = scrollRef.current;
+      const pointer = pointerRef.current;
+      if (!el || !pointer) return;
+      const rect = el.getBoundingClientRect();
+      const dy = computeAutoScrollDelta(pointer.y, { start: rect.top, end: rect.bottom });
+      const dx = computeAutoScrollDelta(pointer.x, { start: rect.left, end: rect.right });
+      if (dy) el.scrollTop += dy;
+      if (dx) el.scrollLeft += dx;
+    }, 16);
+    return () => clearInterval(timer);
+  }, [isPicking]);
+
+  const trackPointer = (event: React.DragEvent) => {
+    pointerRef.current = { x: event.clientX, y: event.clientY };
+  };
+
   /**
    * Renders a single day's card (date header + comida/cena slots + day note).
    * Shared by the vertical (flat list) and horizontal (weeks grid) layouts.
@@ -159,11 +191,16 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
                   data-plan-slot={`${day}:${slot}`}
                   role="button"
                   tabIndex={0}
-                  draggable={movable && !isPicking}
+                  draggable={movable}
                   onClick={() => handleSlotTap(day, slot, movable, isBlocked)}
                   onDragStart={(event) => {
                     event.dataTransfer.effectAllowed = 'move';
+                    // Firefox refuses to start a drag without payload data.
+                    event.dataTransfer.setData('text/plain', `${day}:${slot}`);
                     setTimeout(() => onPickUp?.({ day, slot }), 0);
+                  }}
+                  onDragEnter={() => {
+                    if (!isBlocked && !dragging) setHoverKey(`${day}:${slot}`);
                   }}
                   onDragOver={(event) => {
                     if (!isBlocked && !dragging) {
@@ -173,6 +210,7 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
                   }}
                   onDrop={(event) => {
                     event.preventDefault();
+                    setHoverKey(null);
                     if (!draggingSlot || isBlocked || dragging) return;
                     placeInto(day, slot);
                   }}
@@ -184,6 +222,7 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
                     ...(dragging ? styles.dragging : {}),
                     ...(isBlocked ? styles.blocked : {}),
                     ...(isDropTarget ? styles.dropTarget : {}),
+                    ...(isDropTarget && hoverKey === `${day}:${slot}` ? styles.dropHover : {}),
                     ...(isComplex && !dragging ? styles.complexRecipe : {}),
                     cursor: isBlocked ? 'not-allowed' : (isPicking ? 'pointer' : (movable ? 'grab' : 'pointer')),
                   }}
@@ -200,7 +239,7 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
                   ) : isEmpty ? (
                     <span style={styles.emptyValue}>{t('planning.emptySlot')}</span>
                   ) : (
-                    <span style={styles.value}>{recipe?.name}</span>
+                    <span style={styles.value}>{getRecipeEmoji(recipe)} {recipe?.name}</span>
                   )}
 
                   {mealNote && (
@@ -242,111 +281,54 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
     return result;
   }, [startDate, plan.periodDays]);
 
-  return (
-    <div style={styles.wrapper}>
-      {isPicking && (
-        <div style={styles.moveHint}>
-          <span style={styles.moveHintText}>
-            {draggedRecipe?.name
-              ? t('planning.moveHintNamed', { name: draggedRecipe.name })
-              : t('planning.moveHint')}
-          </span>
-          <button type="button" style={styles.cancelMoveButton} onClick={() => onCancelPickUp?.()}>
-            {t('common.cancel')}
-          </button>
-        </div>
-      )}
+  const pickedFromDrawer = !!draggingSlot && 'isUnassigned' in draggingSlot;
+  const unassignedGroups = useMemo(() => groupUnassigned(unassignedRecipes), [unassignedRecipes]);
+  const groupTitle = (key: UnassignedGroupKey) =>
+    key === 'comida'
+      ? `🍽️ ${t('planning.unassignedLunches')}`
+      : key === 'cena'
+        ? `🌙 ${t('planning.unassignedDinners')}`
+        : `🍴 ${t('planning.unassignedEither')}`;
 
-      {(unassignedRecipes.length > 0 || (isPicking && !(draggingSlot && 'isUnassigned' in draggingSlot))) && (
-      <div
-        style={{ ...styles.unassignedZone, ...(isPicking && !(draggingSlot && 'isUnassigned' in draggingSlot) ? styles.unassignedZoneActive : {}) }}
-        onDragOver={(event) => {
-          event.preventDefault();
-          event.dataTransfer.dropEffect = 'move';
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
-          if (draggingSlot && !('isUnassigned' in draggingSlot)) {
-            onMoveToUnassigned?.(draggingSlot);
-          }
-          onCancelPickUp?.();
-        }}
-        onClick={() => {
-          // Tap-to-move: tapping the zone with a calendar meal picked up removes it from the calendar.
-          if (draggingSlot && !('isUnassigned' in draggingSlot)) {
-            onMoveToUnassigned?.(draggingSlot);
-            onCancelPickUp?.();
-          }
-        }}
-      >
-        <h4 style={styles.unassignedTitle}>📥 {t('planning.unassignedTitle')}</h4>
-        {unassignedRecipes.length === 0 ? (
-          <p style={styles.unassignedEmpty}>{t('planning.unassignedEmpty')}</p>
-        ) : (
-          <div style={styles.unassignedList}>
-            {unassignedRecipes.map((recipe, index) => {
-              const picked = !!draggingSlot && 'isUnassigned' in draggingSlot && draggingSlot.index === index;
-              return (
-                <div
-                  key={`${recipe.id}-${index}`}
-                  role="button"
-                  tabIndex={0}
-                  draggable
-                  onDragStart={(event) => {
-                    event.dataTransfer.effectAllowed = 'move';
-                    setTimeout(() => onPickUp?.({ isUnassigned: true, recipeId: recipe.id, index }), 0);
-                  }}
-                  onDragEnd={() => onCancelPickUp?.()}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (picked) {
-                      onCancelPickUp?.();
-                    } else if (!draggingSlot) {
-                      onPickUp?.({ isUnassigned: true, recipeId: recipe.id, index });
-                    }
-                  }}
-                  style={{ ...styles.unassignedCard, ...(picked ? styles.unassignedCardPicked : {}) }}
-                  title={recipe.name}
-                >
-                  <small style={styles.unassignedCardLabel}>
-                    {recipe.mealType === 'comida'
-                      ? t('mealTypes.comida')
-                      : recipe.mealType === 'cena'
-                        ? t('mealTypes.cena')
-                        : t('planning.dish')}
-                  </small>
-                  <span style={styles.unassignedCardName}>{recipe.name}</span>
-                </div>
-              );
-            })}
+  return (
+    <div style={styles.wrapper} onDragOver={trackPointer}>
+      {/* Fixed-height status row: its height never changes, so starting a drag
+          doesn't shift the calendar under the cursor. */}
+      <div style={{ ...styles.toolbar, ...(isPicking ? styles.toolbarActive : {}) }}>
+        <span style={styles.toolbarText}>
+          {isPicking
+            ? draggedRecipe?.name
+              ? t('planning.moveHintNamed', { name: draggedRecipe.name })
+              : t('planning.moveHint')
+            : t('planning.dragHint')}
+        </span>
+        {isPicking && (
+          <div style={styles.toolbarActions}>
+            <div
+              style={styles.deleteZone}
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'move';
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                if (draggingSlot) onDeleteDragged?.(draggingSlot);
+              }}
+              onClick={() => {
+                if (draggingSlot) onDeleteDragged?.(draggingSlot);
+              }}
+            >
+              <span style={styles.deleteZoneText}>🗑️ {t('planning.deleteZone')}</span>
+            </div>
+            <button type="button" style={styles.cancelMoveButton} onClick={() => onCancelPickUp?.()}>
+              {t('common.cancel')}
+            </button>
           </div>
         )}
       </div>
-      )}
-
-      {isPicking && (
-        <div style={styles.deleteZoneRow}>
-          <div
-            style={styles.deleteZone}
-            onDragOver={(event) => {
-              event.preventDefault();
-              event.dataTransfer.dropEffect = 'move';
-            }}
-            onDrop={(event) => {
-              event.preventDefault();
-              if (draggingSlot) onDeleteDragged?.(draggingSlot);
-            }}
-            onClick={() => {
-              if (draggingSlot) onDeleteDragged?.(draggingSlot);
-            }}
-          >
-            <span style={styles.deleteZoneText}>🗑️ {t('planning.deleteZone')}</span>
-          </div>
-        </div>
-      )}
 
       {isHorizontal ? (
-        <div style={styles.weeksContainer} aria-label={t('planning.calendarTitle')}>
+        <div ref={scrollRef} style={styles.weeksContainer} aria-label={t('planning.calendarTitle')}>
           <div style={styles.weekHeaderRow}>
             {WEEKDAYS_MON_FIRST.map((wd) => (
               <div key={wd} style={styles.weekHeaderCell}>{wd}</div>
@@ -365,34 +347,111 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
           ))}
         </div>
       ) : (
-        <div style={styles.container} aria-label={t('planning.calendarTitle')}>
+        <div ref={scrollRef} style={styles.container} aria-label={t('planning.calendarTitle')}>
           {Array.from({ length: plan.periodDays }, (_, day) => renderDayCell(day, false))}
         </div>
       )}
+
+      {/* "Unassigned" tray. Always mounted and pinned below the calendar so it
+          is a reachable drop target no matter how far the calendar is scrolled. */}
+      <div
+        style={{ ...styles.unassignedZone, ...(isPicking && !pickedFromDrawer ? styles.unassignedZoneActive : {}) }}
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'move';
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          if (draggingSlot && !('isUnassigned' in draggingSlot)) {
+            onMoveToUnassigned?.(draggingSlot);
+          }
+          onCancelPickUp?.();
+        }}
+        onClick={() => {
+          // Tap-to-move: tapping the tray with a calendar meal picked up removes it from the calendar.
+          if (draggingSlot && !('isUnassigned' in draggingSlot)) {
+            onMoveToUnassigned?.(draggingSlot);
+            onCancelPickUp?.();
+          }
+        }}
+      >
+        <h4 style={styles.unassignedTitle}>
+          📥 {t('planning.unassignedTitle')}
+          {unassignedRecipes.length > 0 && <span style={styles.unassignedCount}>{unassignedRecipes.length}</span>}
+        </h4>
+        {unassignedRecipes.length === 0 ? (
+          <p style={styles.unassignedEmpty}>
+            {isPicking && !pickedFromDrawer ? t('planning.unassignedDropHere') : t('planning.unassignedEmpty')}
+          </p>
+        ) : (
+          <div style={styles.unassignedGroups}>
+            {unassignedGroups.map((group) => (
+              <div key={group.key} style={styles.unassignedGroup}>
+                <div style={styles.unassignedGroupTitle}>{groupTitle(group.key)}</div>
+                <div style={styles.unassignedList}>
+                  {group.items.map(({ recipe, index }) => {
+                    const picked = !!draggingSlot && 'isUnassigned' in draggingSlot && draggingSlot.index === index;
+                    return (
+                      <div
+                        key={`${recipe.id}-${index}`}
+                        role="button"
+                        tabIndex={0}
+                        draggable
+                        onDragStart={(event) => {
+                          event.dataTransfer.effectAllowed = 'move';
+                          event.dataTransfer.setData('text/plain', recipe.id);
+                          setTimeout(() => onPickUp?.({ isUnassigned: true, recipeId: recipe.id, index }), 0);
+                        }}
+                        onDragEnd={() => onCancelPickUp?.()}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (picked) {
+                            onCancelPickUp?.();
+                          } else if (!draggingSlot) {
+                            onPickUp?.({ isUnassigned: true, recipeId: recipe.id, index });
+                          }
+                        }}
+                        style={{ ...styles.unassignedCard, ...(picked ? styles.unassignedCardPicked : {}) }}
+                        title={recipe.name}
+                      >
+                        <span style={styles.unassignedCardName}>{getRecipeEmoji(recipe)} {recipe.name}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 };
 
 const makeStyles = (colors: ThemeColors): Record<string, React.CSSProperties> => ({
-  wrapper: { display: 'flex', flexDirection: 'column', height: '100%', fontFamily: FONT_FAMILY },
-  container: { flex: 1, overflowY: 'auto', padding: '0 12px 24px' },
+  wrapper: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, fontFamily: FONT_FAMILY },
+  container: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '0 12px 24px' },
   horizontalContainer: { display: 'flex', flexDirection: 'row', gap: 12, overflowX: 'auto', overflowY: 'hidden', paddingBottom: '16px' },
 
-  moveHint: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, margin: '0 12px 12px', padding: '10px 14px', background: colors.accentSoft, borderRadius: 8 },
-  moveHintText: { fontSize: '13px', color: colors.accentText, fontWeight: 500 },
+  toolbar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexShrink: 0, height: 44, boxSizing: 'border-box', margin: '0 12px 8px', padding: '0 12px', borderRadius: 8, background: colors.card },
+  toolbarActive: { background: colors.accentSoft },
+  toolbarText: { fontSize: '12px', color: colors.textMuted, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 },
+  toolbarActions: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 },
   cancelMoveButton: { border: 'none', background: colors.accent, color: colors.textInverse, fontSize: '12px', fontWeight: 600, padding: '6px 12px', borderRadius: 6, cursor: 'pointer', flexShrink: 0 },
 
-  unassignedZone: { margin: '0 12px 12px', padding: '12px', border: `2px dashed ${colors.border}`, borderRadius: 8, background: colors.card, transition: 'all 0.2s', minHeight: '60px' },
+  unassignedZone: { flexShrink: 0, maxHeight: '34%', overflowY: 'auto', margin: '8px 12px 12px', padding: '10px 12px', border: `2px dashed ${colors.border}`, borderRadius: 8, background: colors.card, transition: 'background 0.2s, border-color 0.2s', boxSizing: 'border-box' },
   unassignedZoneActive: { borderColor: colors.accent, background: colors.accentSoft, cursor: 'pointer' },
-  unassignedTitle: { margin: '0 0 8px 0', fontSize: '12px', color: colors.textMuted, textTransform: 'uppercase' },
+  unassignedTitle: { margin: '0 0 6px 0', fontSize: '12px', color: colors.textMuted, textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 6 },
+  unassignedCount: { background: colors.accent, color: colors.textInverse, borderRadius: 10, fontSize: '10px', fontWeight: 700, padding: '1px 7px' },
   unassignedEmpty: { fontSize: '13px', color: colors.textFaint, margin: 0, fontStyle: 'italic' },
-  unassignedList: { display: 'flex', gap: '8px', flexWrap: 'wrap' },
-  unassignedCard: { display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', width: 150, minHeight: 58, boxSizing: 'border-box', background: colors.surface, border: `1px solid ${colors.border}`, padding: '8px 10px', borderRadius: 9, fontSize: '13px', cursor: 'grab', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' },
+  unassignedGroups: { display: 'flex', flexWrap: 'wrap', gap: '10px 20px' },
+  unassignedGroup: { display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 },
+  unassignedGroupTitle: { fontSize: '11px', fontWeight: 700, color: colors.textFaint, letterSpacing: 0.3 },
+  unassignedList: { display: 'flex', gap: '6px', flexWrap: 'wrap' },
+  unassignedCard: { display: 'flex', flexDirection: 'column', justifyContent: 'center', width: 140, minHeight: 36, boxSizing: 'border-box', background: colors.surface, border: `1px solid ${colors.border}`, padding: '6px 10px', borderRadius: 9, fontSize: '13px', cursor: 'grab', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' },
   unassignedCardPicked: { borderColor: colors.accent, borderWidth: 2, background: colors.accentSoft },
-  deleteZoneRow: { display: 'flex', justifyContent: 'flex-end', margin: '0 12px 12px' },
   deleteZone: { padding: '6px 12px', border: `1px dashed ${colors.danger}`, borderRadius: 8, background: colors.dangerBg, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', alignSelf: 'flex-end' },
   deleteZoneText: { fontSize: '12px', color: colors.dangerText, fontWeight: 600 },
-  unassignedCardLabel: { color: colors.textFaint, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4 },
   unassignedCardName: { color: colors.text, fontSize: 13, fontWeight: 500, marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any },
 
   dayWrapper: { marginBottom: 8 },
@@ -420,6 +479,7 @@ const makeStyles = (colors: ThemeColors): Record<string, React.CSSProperties> =>
 
   dragging: { background: colors.accentSoft, border: `2px dashed ${colors.accent}`, opacity: 0.6 },
   dropTarget: { borderColor: colors.accent, borderStyle: 'dashed' },
+  dropHover: { background: colors.accentSoft, borderStyle: 'solid', borderWidth: 2, transform: 'scale(1.02)' },
   blocked: { opacity: 0.3, filter: 'grayscale(100%)', background: colors.border },
   complexRecipe: { borderLeft: `4px solid ${colors.warning}`, background: colors.warningBg },
   mealNoteText: { fontSize: '11px', color: colors.warning, fontStyle: 'italic', marginTop: '3px', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' },
@@ -428,7 +488,7 @@ const makeStyles = (colors: ThemeColors): Record<string, React.CSSProperties> =>
   dayNoteFullHorizontal: { marginLeft: 0 },
 
   // Weeks (calendar) grid layout for horizontal orientation
-  weeksContainer: { flex: 1, overflowY: 'auto', overflowX: 'auto', padding: '0 12px 24px' },
+  weeksContainer: { flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'auto', padding: '0 12px 24px' },
   weekHeaderRow: { display: 'grid', gridTemplateColumns: 'repeat(7, minmax(120px, 1fr))', gap: 8, marginBottom: 8, minWidth: '840px' },
   weekHeaderCell: { fontSize: 11, fontWeight: 700, color: colors.textFaint, textTransform: 'uppercase', textAlign: 'center', padding: '4px 0' },
   weekRow: { display: 'grid', gridTemplateColumns: 'repeat(7, minmax(120px, 1fr))', gap: 8, marginBottom: 8, alignItems: 'start', minWidth: '840px' },

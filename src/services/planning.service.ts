@@ -279,6 +279,27 @@ export function createPlanningService(db: SQLiteDatabase) {
         }
       }
 
+      // Shrinking the period or marking slots as free must not leave orphaned
+      // assignments behind: they are invisible in the calendar but would still
+      // be counted in the recipe step and in the shopping list.
+      if (changes.periodDays !== undefined || changes.freeDays !== undefined) {
+        const period = changes.periodDays ?? existing.periodDays;
+        const current = await planRepository.getPlanById(db, planId);
+        if (current) {
+          for (const assignment of current.assignments) {
+            const outOfPeriod = assignment.dayIndex >= period;
+            const slotIsFree = current.freeDays.some(
+              (fd) =>
+                fd.dayIndex === assignment.dayIndex &&
+                (fd.type === assignment.slot || fd.type === 'ambas')
+            );
+            if (outOfPeriod || slotIsFree) {
+              await assignmentRepository.deleteAssignment(db, assignment.id);
+            }
+          }
+        }
+      }
+
       const updatedPlan = await planRepository.getPlanById(db, planId);
       return { success: true, data: updatedPlan! };
     },

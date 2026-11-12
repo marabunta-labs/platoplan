@@ -14,6 +14,7 @@ import {
   TouchableOpacity,
   FlatList,
   ScrollView,
+  TextInput,
   StyleSheet,
   ActivityIndicator,
 } from 'react-native';
@@ -25,31 +26,32 @@ import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import type { PlanningStackParamList, MainTabParamList } from '../../navigation/types';
 import type { Recipe, MenuPlan } from '../../models/types';
 import { useRecipes, usePlanning, useIngredients } from '../../hooks';
-import { planMeals } from '../../services/smart-distribution';
+import { planMealsBest } from '../../services/smart-distribution';
 import { AlertCompat } from '../../utils/alert';
 import { useI18n } from '../../i18n';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../constants/theme';
 import { confirmLeavePlan } from './confirmLeavePlan';
+import { getRecipeEmoji } from '../../utils/recipeEmoji';
+import Animated, { LinearTransition } from 'react-native-reanimated';
+import {
+  type RecipeSelection,
+  selectionSignature,
+  totalSelected,
+  applySelectionDelta,
+  clampSelections,
+  sortRecipesBySelection,
+  filterRecipesByQuery,
+  saveSelectionDraft,
+  loadSelectionDraft,
+  clearSelectionDraft,
+} from './selectionDraft';
 
 type NavigationProp = NativeStackNavigationProp<PlanningStackParamList, 'RecipeSelection'>;
 type ScreenRoute = RouteProp<PlanningStackParamList, 'RecipeSelection'>;
 
-interface RecipeSelection {
-  recipeId: string;
-  count: number;
-}
-
-/** Stable, order-independent signature of the selected recipe counts. */
-function selectionSignature(lunch: RecipeSelection[], dinner: RecipeSelection[]): string {
-  const norm = (list: RecipeSelection[]) =>
-    list
-      .filter((s) => s.count > 0)
-      .map((s) => `${s.recipeId}:${s.count}`)
-      .sort()
-      .join(',');
-  return `L[${norm(lunch)}]D[${norm(dinner)}]`;
-}
+/** Smooth reorder when a recipe moves to/from the top of the list. */
+const ROW_LAYOUT = LinearTransition.duration(320);
 
 export function RecipeSelectionScreen() {
   const { t, locale } = useI18n();
@@ -66,6 +68,7 @@ export function RecipeSelectionScreen() {
   const [plan, setPlan] = useState<MenuPlan | null>(null);
   const [planLoading, setPlanLoading] = useState(true);
 
+  const [query, setQuery] = useState('');
   const [lunchSelections, setLunchSelections] = useState<RecipeSelection[]>([]);
   const [dinnerSelections, setDinnerSelections] = useState<RecipeSelection[]>([]);
 
@@ -75,38 +78,72 @@ export function RecipeSelectionScreen() {
   const loadedSignatureRef = useRef<string | null>(null);
   const hadAssignmentsRef = useRef(false);
 
+  // Set once the initial state (plan assignments or restored draft) is in place,
+  // so the draft-saving effect below never overwrites a stored draft with [].
+  const hydratedRef = useRef(false);
+
   useEffect(() => {
+    let cancelled = false;
+    hydratedRef.current = false;
     setPlanLoading(true);
-    loadPlan(planId).then((p) => {
-      setPlan(p);
-      
-      // MEJORA: Si el plan ya tiene recetas asignadas (estamos editando), las cargamos en los contadores
-      if (p && p.assignments && p.assignments.length > 0) {
-        const lunchCounts: Record<string, number> = {};
-        const dinnerCounts: Record<string, number> = {};
-        
-        p.assignments.forEach(assignment => {
-          if (assignment.slot === 'comida') {
-            lunchCounts[assignment.recipeId] = (lunchCounts[assignment.recipeId] || 0) + 1;
-          } else if (assignment.slot === 'cena') {
-            dinnerCounts[assignment.recipeId] = (dinnerCounts[assignment.recipeId] || 0) + 1;
-          }
-        });
-        
-        const loadedLunch = Object.entries(lunchCounts).map(([recipeId, count]) => ({ recipeId, count }));
-        const loadedDinner = Object.entries(dinnerCounts).map(([recipeId, count]) => ({ recipeId, count }));
-        setLunchSelections(loadedLunch);
-        setDinnerSelections(loadedDinner);
+    loadPlan(planId)
+      .then((p) => {
+        if (cancelled) return;
+        setPlan(p);
+
+        let loadedLunch: RecipeSelection[] = [];
+        let loadedDinner: RecipeSelection[] = [];
+
+        // Editing an existing plan: seed the counters from its assignments.
+        if (p && p.assignments && p.assignments.length > 0) {
+          const lunchCounts: Record<string, number> = {};
+          const dinnerCounts: Record<string, number> = {};
+
+          p.assignments.forEach((assignment) => {
+            if (assignment.slot === 'comida') {
+              lunchCounts[assignment.recipeId] = (lunchCounts[assignment.recipeId] || 0) + 1;
+            } else if (assignment.slot === 'cena') {
+              dinnerCounts[assignment.recipeId] = (dinnerCounts[assignment.recipeId] || 0) + 1;
+            }
+          });
+
+          loadedLunch = Object.entries(lunchCounts).map(([recipeId, count]) => ({ recipeId, count }));
+          loadedDinner = Object.entries(dinnerCounts).map(([recipeId, count]) => ({ recipeId, count }));
+          hadAssignmentsRef.current = true;
+        } else {
+          hadAssignmentsRef.current = false;
+        }
         loadedSignatureRef.current = selectionSignature(loadedLunch, loadedDinner);
-        hadAssignmentsRef.current = true;
-      } else {
-        loadedSignatureRef.current = selectionSignature([], []);
-        hadAssignmentsRef.current = false;
-      }
-      
-      setPlanLoading(false);
-    });
+
+        // A draft (unsaved choices made before leaving this step, e.g. to create
+        // a recipe) wins over the persisted assignments.
+        const draft = p ? loadSelectionDraft(planId) : null;
+        let initialLunch = loadedLunch;
+        let initialDinner = loadedDinner;
+        if (draft && p) {
+          const lunchFree = p.freeDays.filter((fd) => fd.type === 'comida' || fd.type === 'ambas').length;
+          const dinnerFree = p.freeDays.filter((fd) => fd.type === 'cena' || fd.type === 'ambas').length;
+          initialLunch = clampSelections(draft.lunch, p.periodDays - lunchFree);
+          initialDinner = clampSelections(draft.dinner, p.periodDays - dinnerFree);
+        }
+        setLunchSelections(initialLunch);
+        setDinnerSelections(initialDinner);
+        hydratedRef.current = true;
+        setPlanLoading(false);
+      })
+      .catch(() => {
+        if (!cancelled) setPlanLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [planId]);
+
+  // Keep the draft in sync so the choices survive leaving the screen.
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    saveSelectionDraft(planId, { lunch: lunchSelections, dinner: dinnerSelections });
+  }, [planId, lunchSelections, dinnerSelections]);
 
   const requiredLunches = useMemo(() => {
     if (!plan) return 0;
@@ -124,36 +161,40 @@ export function RecipeSelectionScreen() {
     return plan.periodDays - dinnerFreeDays;
   }, [plan]);
 
-  // Filter recipes by type
+  // Filter recipes by type; chosen ones float to the top (animated via ROW_LAYOUT)
   const lunchRecipes = useMemo(
     () =>
-      recipes.filter(
-        (r) => r.mealType === 'comida' || r.mealType === 'ambas'
-      ).sort((a, b) => {
-        const selected = (lunchSelections.find((selection) => selection.recipeId === b.id)?.count ?? 0) - (lunchSelections.find((selection) => selection.recipeId === a.id)?.count ?? 0);
-        return selected || a.name.localeCompare(b.name, locale);
-      }),
-    [recipes, locale, lunchSelections]
+      filterRecipesByQuery(
+        sortRecipesBySelection(
+          recipes.filter((r) => r.mealType === 'comida' || r.mealType === 'ambas'),
+          lunchSelections,
+          locale
+        ),
+        query
+      ),
+    [recipes, locale, lunchSelections, query]
   );
 
   const dinnerRecipes = useMemo(
     () =>
-      recipes.filter(
-        (r) => r.mealType === 'cena' || r.mealType === 'ambas'
-      ).sort((a, b) => {
-        const selected = (dinnerSelections.find((selection) => selection.recipeId === b.id)?.count ?? 0) - (dinnerSelections.find((selection) => selection.recipeId === a.id)?.count ?? 0);
-        return selected || a.name.localeCompare(b.name, locale);
-      }),
-    [recipes, locale, dinnerSelections]
+      filterRecipesByQuery(
+        sortRecipesBySelection(
+          recipes.filter((r) => r.mealType === 'cena' || r.mealType === 'ambas'),
+          dinnerSelections,
+          locale
+        ),
+        query
+      ),
+    [recipes, locale, dinnerSelections, query]
   );
 
   const totalLunchSelected = useMemo(
-    () => lunchSelections.reduce((sum, s) => sum + s.count, 0),
+    () => totalSelected(lunchSelections),
     [lunchSelections]
   );
 
   const totalDinnerSelected = useMemo(
-    () => dinnerSelections.reduce((sum, s) => sum + s.count, 0),
+    () => totalSelected(dinnerSelections),
     [dinnerSelections]
   );
 
@@ -167,31 +208,12 @@ export function RecipeSelectionScreen() {
 
   const updateSelection = useCallback(
     (
-      selections: RecipeSelection[],
       setSelections: React.Dispatch<React.SetStateAction<RecipeSelection[]>>,
       recipeId: string,
       delta: number,
       maxTotal: number
     ) => {
-      setSelections((prev) => {
-        const currentTotal = prev.reduce((sum, s) => sum + s.count, 0);
-        const existing = prev.find((s) => s.recipeId === recipeId);
-        const currentCount = existing?.count ?? 0;
-        const newCount = Math.max(0, currentCount + delta);
-
-        // Don't exceed required total
-        if (delta > 0 && currentTotal >= maxTotal) return prev;
-
-        if (newCount === 0) {
-          return prev.filter((s) => s.recipeId !== recipeId);
-        }
-        if (existing) {
-          return prev.map((s) =>
-            s.recipeId === recipeId ? { ...s, count: newCount } : s
-          );
-        }
-        return [...prev, { recipeId, count: newCount }];
-      });
+      setSelections((prev) => applySelectionDelta(prev, recipeId, delta, maxTotal));
     },
     []
   );
@@ -213,6 +235,7 @@ export function RecipeSelectionScreen() {
     // would wipe the calendar layout). Just continue to the calendar.
     const currentSignature = selectionSignature(lunchSelections, dinnerSelections);
     if (hadAssignmentsRef.current && currentSignature === loadedSignatureRef.current) {
+      clearSelectionDraft(planId);
       navigation.navigate('PlanCalendar', { planId });
       return;
     }
@@ -228,7 +251,7 @@ export function RecipeSelectionScreen() {
           })
           .filter((s): s is NonNullable<typeof s> => s !== null);
 
-      const result = planMeals({
+      const result = planMealsBest({
         periodDays: plan.periodDays,
         freeDays: plan.freeDays,
         elaborateDays: plan.elaborateDays,
@@ -242,6 +265,7 @@ export function RecipeSelectionScreen() {
         AlertCompat.alert(t('common.error'), t('common.retry'));
         return;
       }
+      clearSelectionDraft(planId);
       navigation.navigate('PlanCalendar', { planId });
     } finally {
       setGenerating(false);
@@ -290,13 +314,13 @@ export function RecipeSelectionScreen() {
     maxTotal: number
   ) => {
     const count = getSelectionCount(selections, recipe.id);
-    const currentTotal = selections.reduce((sum, s) => sum + s.count, 0);
+    const currentTotal = totalSelected(selections);
     const canAdd = currentTotal < maxTotal;
 
     return (
-      <View style={styles.recipeRow}>
+      <View style={[styles.recipeRow, count > 0 && styles.recipeRowSelected]}>
         <View style={styles.recipeInfo}>
-          <Text style={styles.recipeName}>{recipe.name}</Text>
+          <Text style={styles.recipeName}>{getRecipeEmoji(recipe)} {recipe.name}</Text>
           <Text style={styles.recipeMeta}>
             {recipe.prepTime === 'elaborado' ? `👨‍🍳 ${t('prepTimes.elaborado')}` : `⚡ ${t('prepTimes.rapido')}`}
           </Text>
@@ -305,7 +329,7 @@ export function RecipeSelectionScreen() {
           <TouchableOpacity
             style={[styles.counterButton, count === 0 && styles.counterButtonDisabled]}
             onPress={() =>
-              updateSelection(selections, setSelections, recipe.id, -1, maxTotal)
+              updateSelection(setSelections, recipe.id, -1, maxTotal)
             }
             disabled={count === 0}
             accessibilityRole="button"
@@ -322,7 +346,7 @@ export function RecipeSelectionScreen() {
           <TouchableOpacity
             style={[styles.counterButton, !canAdd && styles.counterButtonDisabled]}
             onPress={() =>
-              updateSelection(selections, setSelections, recipe.id, 1, maxTotal)
+              updateSelection(setSelections, recipe.id, 1, maxTotal)
             }
             disabled={!canAdd}
             accessibilityRole="button"
@@ -378,6 +402,16 @@ export function RecipeSelectionScreen() {
         <Text style={styles.newRecipeButtonText}>＋ {t('recipes.newRecipe')}</Text>
       </TouchableOpacity>
 
+      <TextInput
+        style={styles.searchInput}
+        value={query}
+        onChangeText={setQuery}
+        placeholder={t('planning.searchRecipes')}
+        placeholderTextColor={colors.textFaint}
+        clearButtonMode="while-editing"
+        accessibilityLabel={t('planning.searchRecipes')}
+      />
+
       {/* Lunch Section */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
@@ -402,9 +436,9 @@ export function RecipeSelectionScreen() {
           </Text>
         ) : (
           lunchRecipes.map((recipe) => (
-            <View key={recipe.id}>
+            <Animated.View key={recipe.id} layout={ROW_LAYOUT}>
               {renderRecipeItem(recipe, lunchSelections, setLunchSelections, requiredLunches)}
-            </View>
+            </Animated.View>
           ))
         )}
       </View>
@@ -433,9 +467,9 @@ export function RecipeSelectionScreen() {
           </Text>
         ) : (
           dinnerRecipes.map((recipe) => (
-            <View key={recipe.id}>
+            <Animated.View key={recipe.id} layout={ROW_LAYOUT}>
               {renderRecipeItem(recipe, dinnerSelections, setDinnerSelections, requiredDinners)}
-            </View>
+            </Animated.View>
           ))
         )}
       </View>
@@ -493,6 +527,8 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   diffText: { fontSize: 13, color: colors.warningText, marginBottom: 8 },
   emptyText: { fontSize: 14, color: colors.textFaint, fontStyle: 'italic', paddingVertical: 12 },
   recipeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  searchInput: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, color: colors.text, backgroundColor: colors.surface, marginBottom: 16 },
+  recipeRowSelected: { backgroundColor: colors.accentSoft, paddingHorizontal: 8, borderRadius: 8 },
   recipeInfo: { flex: 1, marginRight: 12 },
   recipeName: { fontSize: 15, fontWeight: '500', color: colors.text },
   recipeMeta: { fontSize: 12, color: colors.textFaint, marginTop: 2 },

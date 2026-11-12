@@ -87,8 +87,7 @@ export function PlanConfigScreen() {
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<ScreenRouteProp>();
   
-  // AÑADIDO: Sacamos 'history' para cargar el plan de forma instantánea
-  const { createPlan, updatePlan, loadPlan, activePlan, history } = usePlanning();
+  const { createPlan, updatePlan, loadPlan, activePlan } = usePlanning();
 
   const planId = route.params?.planId;
   const isEditing = route.params?.isEditing;
@@ -115,11 +114,11 @@ export function PlanConfigScreen() {
   const [step, setStep] = useState(0);
   const [isInitializing, setIsInitializing] = useState(isEditing);
 
-  // Buscamos el plan en la memoria (historial) para que sea instantáneo
+  // The plan being edited, once loaded into the hook (see loadPlan fallback below)
   const currentPlan = useMemo(() => {
     if (!isEditing || !planId) return null;
-    return (history || []).find(p => p.id === planId) || (activePlan?.id === planId ? activePlan : null);
-  }, [history, activePlan, planId, isEditing]);
+    return activePlan?.id === planId ? activePlan : null;
+  }, [activePlan, planId, isEditing]);
 
   // Cargar datos previos
   useEffect(() => {

@@ -117,7 +117,7 @@ describe('Planning Service', () => {
             id,
             name: `Lunch Recipe ${id}`,
             mealType: 'comida',
-            prepTime: 'rapido',
+            prepTime: 'rapido', servings: 1,
             ingredients: [],
             createdAt: new Date(),
             updatedAt: new Date(),
@@ -128,7 +128,7 @@ describe('Planning Service', () => {
             id,
             name: `Dinner Recipe ${id}`,
             mealType: 'cena',
-            prepTime: 'rapido',
+            prepTime: 'rapido', servings: 1,
             ingredients: [],
             createdAt: new Date(),
             updatedAt: new Date(),
@@ -139,7 +139,7 @@ describe('Planning Service', () => {
             id,
             name: 'Ambas Recipe',
             mealType: 'ambas',
-            prepTime: 'rapido',
+            prepTime: 'rapido', servings: 1,
             ingredients: [],
             createdAt: new Date(),
             updatedAt: new Date(),
@@ -419,6 +419,54 @@ describe('Planning Service', () => {
         'plan-1',
         expect.objectContaining({ elaborateDays: [5, 6] })
       );
+    });
+
+    describe('orphaned assignments', () => {
+      const assignments = [
+        { id: 'a0', planId: 'plan-1', dayIndex: 0, slot: 'comida' as const, recipeId: 'r1' },
+        { id: 'a5', planId: 'plan-1', dayIndex: 5, slot: 'comida' as const, recipeId: 'r1' },
+        { id: 'a6', planId: 'plan-1', dayIndex: 6, slot: 'cena' as const, recipeId: 'r2' },
+      ];
+
+      it('removes assignments that fall outside a shortened period', async () => {
+        const before = mockPlan({ periodDays: 7, assignments });
+        const after = mockPlan({ periodDays: 5, assignments });
+        vi.mocked(planRepository.getPlanById)
+          .mockResolvedValueOnce(before) // existing
+          .mockResolvedValueOnce(after) // re-read after update
+          .mockResolvedValue(after);
+
+        await service.updatePlan('plan-1', { periodDays: 5 });
+
+        const deleted = vi.mocked(assignmentRepository.deleteAssignment).mock.calls.map((c) => c[1]);
+        expect(deleted.sort()).toEqual(['a5', 'a6']);
+      });
+
+      it('removes assignments on slots that become free', async () => {
+        const before = mockPlan({ periodDays: 7, assignments });
+        const after = mockPlan({
+          periodDays: 7,
+          assignments,
+          freeDays: [{ id: 'f1', planId: 'plan-1', dayIndex: 6, type: 'cena' }],
+        });
+        vi.mocked(planRepository.getPlanById)
+          .mockResolvedValueOnce(before)
+          .mockResolvedValueOnce(after)
+          .mockResolvedValue(after);
+
+        await service.updatePlan('plan-1', { freeDays: [{ dayIndex: 6, type: 'cena' }] });
+
+        const deleted = vi.mocked(assignmentRepository.deleteAssignment).mock.calls.map((c) => c[1]);
+        expect(deleted).toEqual(['a6']);
+      });
+
+      it('does not touch assignments when only the name changes', async () => {
+        vi.mocked(planRepository.getPlanById).mockResolvedValue(mockPlan({ assignments }));
+
+        await service.updatePlan('plan-1', { name: 'Semana 1' });
+
+        expect(assignmentRepository.deleteAssignment).not.toHaveBeenCalled();
+      });
     });
 
     it('should validate count match when confirming a plan', async () => {

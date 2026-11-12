@@ -12,6 +12,7 @@ import { AlertCompat } from './alert';
 export interface ExportPdfOptions {
   title: string;
   bodyHtml: string;
+  orientation?: 'vertical' | 'horizontal';
 }
 
 /**

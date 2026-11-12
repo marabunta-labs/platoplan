@@ -36,7 +36,7 @@ function buildDocument({ title, bodyHtml, orientation = 'vertical' }: ExportPdfO
 <title>${title}</title>
 <style>
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1a1a1a; margin: 0; padding: 24px; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; color: #1a1a1a; margin: 0; padding: 24px; }
   h1 { font-size: 22px; margin: 0 0 4px; }
   .subtitle { color: #666; font-size: 13px; margin: 0 0 16px; }
 

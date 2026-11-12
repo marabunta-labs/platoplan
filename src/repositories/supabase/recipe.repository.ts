@@ -19,6 +19,8 @@ interface RecipeRow {
   name: string;
   meal_type: string;
   prep_time: string;
+  description?: string | null;
+  servings?: number | null;
   created_at: string;
   updated_at: string;
   synced_at: string | null;
@@ -39,6 +41,9 @@ function mapRowToRecipe(row: RecipeRow): Recipe {
     name: row.name,
     mealType: row.meal_type as MealType,
     prepTime: row.prep_time as Recipe['prepTime'],
+    description: row.description ? row.description : undefined,
+    // The remote schema may not store servings; never leave it undefined.
+    servings: row.servings && row.servings > 0 ? row.servings : 1,
     ingredients: [],
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
@@ -134,6 +139,8 @@ export class SupabaseRecipeRepository
         name: input.name,
         meal_type: input.mealType,
         prep_time: input.prepTime,
+        servings: input.servings ?? 1,
+        description: input.description ?? '',
         created_at: now,
         updated_at: now,
         synced_at: now,
@@ -187,6 +194,12 @@ export class SupabaseRecipeRepository
     }
     if (input.prepTime !== undefined) {
       updates.prep_time = input.prepTime;
+    }
+    if (input.servings !== undefined) {
+      updates.servings = input.servings;
+    }
+    if (input.description !== undefined) {
+      updates.description = input.description;
     }
 
     const now = new Date().toISOString();

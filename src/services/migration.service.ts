@@ -294,7 +294,7 @@ export class MigrationService {
    * Maps a local SQLite row to the remote Supabase row format.
    * Adds user_id and synced_at, preserves all existing data including IDs and timestamps.
    */
-  private mapToRemoteRow(
+  mapToRemoteRow(
     table: MigratableTable,
     row: Record<string, unknown>,
     userId: string
@@ -324,6 +324,8 @@ export class MigrationService {
           name: row.name,
           meal_type: row.meal_type,
           prep_time: row.prep_time,
+          description: row.description ?? '',
+          servings: row.servings ?? 2,
           created_at: row.created_at,
           updated_at: row.updated_at,
           synced_at: now,
@@ -399,7 +401,7 @@ export class MigrationService {
           user_id: userId,
           plan_id: row.plan_id,
           generated_at: row.generated_at,
-          is_stale: row.is_stale,
+          is_stale: Boolean(row.is_stale),
           created_at: row.created_at ?? row.generated_at ?? now,
           updated_at: row.updated_at ?? now,
           synced_at: now,
@@ -415,8 +417,8 @@ export class MigrationService {
           pantry_quantity_deducted: row.pantry_quantity_deducted,
           net_quantity: row.net_quantity,
           purchase_units: row.purchase_units,
-          is_manually_edited: row.is_manually_edited,
-          is_removed: row.is_removed,
+          is_manually_edited: Boolean(row.is_manually_edited),
+          is_removed: Boolean(row.is_removed),
           created_at: row.created_at ?? now,
           updated_at: row.updated_at ?? now,
           synced_at: now,
@@ -457,4 +459,15 @@ export class MigrationService {
       }
     }
   }
+}
+
+const mapper = new MigrationService();
+
+/** Maps a local SQLite row to the shape Supabase expects (shared with the sync engine). */
+export function mapLocalRowToRemote(
+  table: MigratableTable,
+  row: Record<string, unknown>,
+  userId: string
+): Record<string, unknown> {
+  return mapper.mapToRemoteRow(table, row, userId);
 }

@@ -25,7 +25,7 @@ import { GuestBanner } from '@/components/GuestBanner';
 import { AuthProvider, DatabaseProvider, SyncProvider, ThemeProvider } from '@/context';
 import { useAuth } from '@/context';
 import { ResponsiveNavigator } from '@/navigation';
-import { useRealtimeSync } from '@/hooks';
+import { useRealtimeSync, useBackgroundSync } from '@/hooks';
 import { useDatabase } from '@/context';
 import { supabase } from '@/config/supabase';
 import { I18nProvider } from '@/i18n';
@@ -45,6 +45,12 @@ applyGlobalFont();
  * can access the SyncManager (for remote change listeners) and the db
  * (for writing remote changes to local SQLite).
  */
+/** Mirrors the user's local data to Supabase (authenticated users only). */
+function CloudSyncBridge() {
+  useBackgroundSync(supabase);
+  return null;
+}
+
 function RealtimeSyncBridge({ children }: { children: React.ReactNode }) {
   useRealtimeSync();
   return <>{children}</>;
@@ -77,6 +83,7 @@ function AuthenticatedApp() {
   return (
     <SyncProvider db={db} supabaseClient={supabase}>
       <RealtimeSyncBridge>
+        <CloudSyncBridge />
         <NavigationContainer>
           <ResponsiveNavigator />
           <StatusBar style="auto" />

@@ -17,6 +17,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import type { SyncStatus } from '../models/sync-types';
 import { useSync } from '../context/SyncContext';
+import { getEngineState, subscribeEngineState, type EngineState } from '../sync/engine-status';
 import { useI18n } from '../i18n';
 import { useTheme } from '../context/ThemeContext';
 import type { ThemeColors } from '../constants/theme';
@@ -35,7 +36,12 @@ export function SyncStatusIndicator({ showLabel = false }: SyncStatusIndicatorPr
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const syncManager = useSync();
-  const [status, setStatus] = useState<SyncStatus>(syncManager.syncStatus);
+  const [managerStatus, setStatus] = useState<SyncStatus>(syncManager.syncStatus);
+  const [engine, setEngine] = useState<EngineState>(getEngineState());
+
+  // The cloud sync engine's state takes precedence while it is working or failing.
+  const status: SyncStatus =
+    engine.status === 'error' ? 'error' : engine.status === 'syncing' ? 'syncing' : managerStatus;
 
   const statusConfig: Record<SyncStatus, { icon: string; color: string; label: string }> = {
     syncing: { icon: '', color: colors.accent, label: t('sync.syncing') },
@@ -53,10 +59,17 @@ export function SyncStatusIndicator({ showLabel = false }: SyncStatusIndicatorPr
     return unsubscribe;
   }, [syncManager]);
 
+  useEffect(() => subscribeEngineState(setEngine), []);
+
   const config = statusConfig[status];
 
   return (
-    <View style={styles.container} accessibilityRole="text" accessibilityLabel={config.label}>
+    <View
+      style={styles.container}
+      accessibilityRole="text"
+      accessibilityLabel={status === 'error' && engine.message ? `${config.label}: ${engine.message}` : config.label}
+      {...({ title: status === 'error' ? engine.message : undefined } as object)}
+    >
       {status === 'syncing' ? (
         <ActivityIndicator size="small" color={config.color} />
       ) : (

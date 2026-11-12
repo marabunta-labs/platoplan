@@ -15,7 +15,8 @@ activado en todas las tablas y políticas por usuario (`auth.uid() = user_id`), 
 cada usuario solo ve sus propios datos.
 
 1. Crea un proyecto nuevo en Supabase.
-2. Aplica las migraciones (una de estas opciones):
+2. Crea el esquema (una de estas opciones):
+   - **Proyecto vacío (lo más simple):** pega y ejecuta `supabase/schema.sql` completo en el SQL Editor. Ya incluye todas las migraciones; no ejecutes las de abajo además.
    - **Supabase CLI:** `supabase link --project-ref <ref>` y luego `supabase db push`.
    - **Manual:** abre el SQL Editor del panel y ejecuta, en orden, el contenido de:
      1. `supabase/migrations/20240101000000_initial_schema.sql`
@@ -91,3 +92,18 @@ vercel --prod # a producción
 npm run build:web   # genera dist/
 npx expo serve      # sirve dist/ en http://localhost:8081
 ```
+
+## Sincronización con la nube
+
+Con sesión iniciada, la app refleja los datos locales (SQLite) en Supabase
+(`src/sync/push-sync.ts`, montada desde `App.tsx`):
+
+- Al abrir la app, al recuperar conexión y cada ~10 s sube lo nuevo o modificado,
+  conservando los ids. Cada ~60 s también trae lo que exista en la nube y no esté
+  en el dispositivo (restaurar tras borrar datos, o datos creados en otro sitio).
+- Lo que borras en un dispositivo se borra en la nube, pero nunca se borran filas
+  que este dispositivo no haya subido antes.
+- El icono de sincronización de la cabecera muestra ✓ / girando / ⚠ (con el error
+  al pasar el ratón). Sin la base de datos creada (`supabase/schema.sql`) mostrará ⚠.
+- Es copia de seguridad/sincronización simple: si editas el mismo dato en dos
+  dispositivos a la vez, gana el último que sincronice.

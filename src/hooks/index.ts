@@ -5,6 +5,7 @@ export { usePlanning } from './usePlanning';
 export { useShoppingList } from './useShoppingList';
 export { useWebKeyboard } from './useWebKeyboard';
 export { useRealtimeSync } from './useRealtimeSync';
+export { useBackgroundSync } from './useBackgroundSync';
 export { useTableInvalidation } from './useTableInvalidation';
 export { tableInvalidationEmitter } from './tableInvalidationEmitter';
 export type { WebKeyboardOptions } from './useWebKeyboard';

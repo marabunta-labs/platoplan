@@ -102,7 +102,7 @@ export class SupabasePantryRepository
       throw new Error(`Failed to fetch pantry entries: ${error.message}`);
     }
 
-    return (data as PantryRowWithIngredient[]).map(mapRowToPantryEntry);
+    return (data as unknown as PantryRowWithIngredient[]).map(mapRowToPantryEntry);
   }
 
   async getById(id: string): Promise<PantryEntry | null> {
@@ -120,7 +120,7 @@ export class SupabasePantryRepository
       throw new Error(`Failed to fetch pantry entry: ${error.message}`);
     }
 
-    return data ? mapRowToPantryEntry(data as PantryRowWithIngredient) : null;
+    return data ? mapRowToPantryEntry(data as unknown as PantryRowWithIngredient) : null;
   }
 
   async create(input: CreatePantryInput): Promise<PantryEntry> {
@@ -181,7 +181,7 @@ export class SupabasePantryRepository
       throw new Error(`Failed to update pantry entry: ${error.message}`);
     }
 
-    return mapRowToPantryEntry(data as PantryRowWithIngredient);
+    return mapRowToPantryEntry(data as unknown as PantryRowWithIngredient);
   }
 
   async delete(id: string): Promise<boolean> {

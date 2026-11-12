@@ -155,7 +155,7 @@ describe('Ingredient Service - Property Tests', () => {
               id: 'recipe-new',
               name: 'Test Recipe',
               mealType: 'comida',
-              prepTime: 'rapido',
+              prepTime: 'rapido', servings: 1,
               ingredients: quantities.map((qty, i) => ({
                 ingredientId: `ing-${i}`,
                 quantity: qty,
@@ -167,7 +167,7 @@ describe('Ingredient Service - Property Tests', () => {
             const input: CreateRecipeInput = {
               name: 'Test Recipe',
               mealType: 'comida',
-              prepTime: 'rapido',
+              prepTime: 'rapido', servings: 1,
               ingredients: quantities.map((qty, i) => ({
                 ingredientId: `ing-${i}`,
                 quantity: qty,
@@ -209,7 +209,7 @@ describe('Ingredient Service - Property Tests', () => {
             const input: CreateRecipeInput = {
               name: 'Test Recipe',
               mealType: 'comida',
-              prepTime: 'rapido',
+              prepTime: 'rapido', servings: 1,
               ingredients,
             };
 

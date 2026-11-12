@@ -3,7 +3,7 @@
  * Implements IRepository for consistent interface with other repositories.
  */
 
-import type { SQLiteDatabase } from 'expo-sqlite';
+import type { SQLiteDatabase, SQLiteBindValue } from 'expo-sqlite';
 import { withTransaction, generateId } from '../database/database';
 import type { Recipe, RecipeIngredient } from '../models/types';
 import type { MealType, MeasureUnit } from '../models/enums';
@@ -145,7 +145,7 @@ export class RecipeRepository
     return withTransaction(this.db, async (txDb) => {
       // Build the SET clause dynamically based on provided fields
       const setClauses: string[] = [];
-      const params: unknown[] = [];
+      const params: SQLiteBindValue[] = [];
 
       if (input.name !== undefined) {
         setClauses.push('name = ?');

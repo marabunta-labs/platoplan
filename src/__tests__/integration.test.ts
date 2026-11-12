@@ -372,7 +372,7 @@ describe('Integration Tests - End-to-End Workflows', () => {
       const recipeResult = await recipeService.create({
         name: 'Pasta con Tomate',
         mealType: 'comida',
-        prepTime: 'rapido',
+        prepTime: 'rapido', servings: 1,
         ingredients: [
           { ingredientId: tomato.id, quantity: 200 },
           { ingredientId: pasta.id, quantity: 250 },
@@ -505,7 +505,7 @@ describe('Integration Tests - End-to-End Workflows', () => {
       const recipe1Result = await recipeService.create({
         name: 'Arroz con Pollo',
         mealType: 'comida',
-        prepTime: 'elaborado',
+        prepTime: 'elaborado', servings: 1,
         ingredients: [
           { ingredientId: arroz.id, quantity: 300 },
           { ingredientId: pollo.id, quantity: 400 },
@@ -517,7 +517,7 @@ describe('Integration Tests - End-to-End Workflows', () => {
       const recipe2Result = await recipeService.create({
         name: 'Arroz Frito',
         mealType: 'cena',
-        prepTime: 'rapido',
+        prepTime: 'rapido', servings: 1,
         ingredients: [
           { ingredientId: arroz.id, quantity: 250 },
           { ingredientId: cebolla.id, quantity: 100 },
@@ -616,7 +616,7 @@ describe('Integration Tests - End-to-End Workflows', () => {
       const input: CreateRecipeInput = {
         name: 'Tortilla Francesa',
         mealType: 'cena',
-        prepTime: 'rapido',
+        prepTime: 'rapido', servings: 1,
         ingredients: [{ ingredientId: ingredient.id, quantity: 3 }],
       };
 
@@ -707,7 +707,7 @@ describe('Integration Tests - End-to-End Workflows', () => {
       const result = await recipeService.create({
         name: '',
         mealType: 'comida',
-        prepTime: 'rapido',
+        prepTime: 'rapido', servings: 1,
         ingredients: [{ ingredientId: 'ing-1', quantity: 100 }],
       });
 
@@ -723,7 +723,7 @@ describe('Integration Tests - End-to-End Workflows', () => {
       const result = await recipeService.create({
         name: 'Receta con cantidad inválida',
         mealType: 'comida',
-        prepTime: 'rapido',
+        prepTime: 'rapido', servings: 1,
         ingredients: [{ ingredientId: 'ing-1', quantity: 0 }],
       });
 
@@ -739,7 +739,7 @@ describe('Integration Tests - End-to-End Workflows', () => {
       const input: CreateRecipeInput = {
         name: 'Gazpacho',
         mealType: 'comida',
-        prepTime: 'rapido',
+        prepTime: 'rapido', servings: 1,
         ingredients: [{ ingredientId: 'ing-1', quantity: 200 }],
       };
 
@@ -788,7 +788,7 @@ describe('Integration Tests - End-to-End Workflows', () => {
       const recipeResult = await recipeService.create({
         name: 'Bocadillo',
         mealType: 'ambas',
-        prepTime: 'rapido',
+        prepTime: 'rapido', servings: 1,
         ingredients: [{ ingredientId: ingredient.id, quantity: 100 }],
       });
       const recipe = recipeResult.success ? recipeResult.data : null;

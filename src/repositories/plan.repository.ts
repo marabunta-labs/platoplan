@@ -4,7 +4,7 @@
  * Implements IRepository for consistent interface with other repositories.
  */
 
-import type { SQLiteDatabase } from 'expo-sqlite';
+import type { SQLiteDatabase, SQLiteBindValue } from 'expo-sqlite';
 import type { MenuPlan, PlanAssignment, FreeDay } from '../models/types';
 import type { PlanStatus, MealSlot, FreeDayType } from '../models/enums';
 import type { IRepository } from './interfaces';
@@ -214,7 +214,7 @@ export class PlanRepository
    */
   async update(planId: string, changes: UpdatePlanInput): Promise<MenuPlan> {
     const setClauses: string[] = [];
-    const params: unknown[] = [];
+    const params: SQLiteBindValue[] = [];
 
     if (changes.status !== undefined) {
       setClauses.push('status = ?');
@@ -337,7 +337,7 @@ export async function updatePlan(
   changes: UpdatePlanInput
 ): Promise<void> {
   const setClauses: string[] = [];
-  const params: unknown[] = [];
+  const params: SQLiteBindValue[] = [];
 
   if (changes.status !== undefined) {
     setClauses.push('status = ?');

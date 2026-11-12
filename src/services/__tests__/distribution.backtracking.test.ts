@@ -27,7 +27,7 @@ function makeRecipe(overrides: Partial<Recipe> = {}): Recipe {
     id: 'recipe-1',
     name: 'Test Recipe',
     mealType: 'comida',
-    prepTime: 'rapido',
+    prepTime: 'rapido', servings: 1,
     ingredients: [],
     createdAt: new Date(),
     updatedAt: new Date(),

@@ -101,7 +101,7 @@ function makeRecipe(
     id,
     name,
     mealType: 'comida',
-    prepTime: 'rapido',
+    prepTime: 'rapido', servings: 1,
     ingredients: ingredients.map((i) => ({
       ingredientId: i.ingredientId,
       quantity: i.quantity,

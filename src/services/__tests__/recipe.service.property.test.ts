@@ -126,7 +126,7 @@ function makeRecipe(overrides: Partial<Recipe> = {}): Recipe {
     id: 'recipe-' + Math.random().toString(36).slice(2, 10),
     name: 'Default Recipe',
     mealType: 'comida',
-    prepTime: 'rapido',
+    prepTime: 'rapido', servings: 1,
     ingredients: [{ ingredientId: 'ing-1', quantity: 1 }],
     createdAt: new Date(),
     updatedAt: new Date(),

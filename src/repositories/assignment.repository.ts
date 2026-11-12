@@ -4,7 +4,7 @@
  * Implements IRepository for consistent interface with other repositories.
  */
 
-import type { SQLiteDatabase } from 'expo-sqlite';
+import type { SQLiteDatabase, SQLiteBindValue } from 'expo-sqlite';
 import type { PlanAssignment, FreeDay } from '../models/types';
 import type { MealSlot, FreeDayType } from '../models/enums';
 import type { IRepository } from './interfaces';
@@ -248,7 +248,7 @@ export class FreeDayRepository
   async update(id: string, input: Partial<CreateFreeDayInput>): Promise<FreeDay> {
     const now = new Date().toISOString();
     const setClauses: string[] = [];
-    const params: unknown[] = [];
+    const params: SQLiteBindValue[] = [];
 
     if (input.type !== undefined) {
       setClauses.push('type = ?');

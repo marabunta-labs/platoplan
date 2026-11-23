@@ -4,6 +4,7 @@ import type { ShoppingListItem } from '../models/types';
 import { useI18n } from '../i18n';
 import { useTheme } from '../context/ThemeContext';
 import type { ThemeColors } from '../constants/theme';
+import { categoryPresentation } from '../constants/ingredient-categories';
 
 export interface ShoppingItemProps {
   item: ShoppingListItem;
@@ -49,7 +50,10 @@ export const ShoppingItem: React.FC<ShoppingItemProps> = ({
   // so the "to buy" figure updates in real time before the user confirms.
   const previewAvailable = parsedAvailable();
   const previewNet = Math.max(0, item.totalQuantityNeeded - previewAvailable);
-  const previewPackages = packageSize > 0 ? Math.ceil(previewNet / packageSize) : previewNet;
+  const computedPackages = packageSize > 0 ? Math.ceil(previewNet / packageSize) : previewNet;
+  // A hand-set amount (+/-) wins while the pantry figure it was set against is unchanged.
+  const usesManual = item.isManuallyEdited && previewAvailable === item.pantryQuantityDeducted;
+  const previewPackages = usesManual ? item.purchaseUnits : computedPackages;
   const covered = previewPackages === 0;
 
   // The item is "reviewed" once the user has confirmed their pantry for it
@@ -83,7 +87,7 @@ export const ShoppingItem: React.FC<ShoppingItemProps> = ({
       <View style={styles.titleRow}>
         <View style={styles.titleLeft}>
           <Text style={[styles.name, covered && styles.nameConfirmed]}>{displayName}</Text>
-          <Text style={styles.categoryTag}>{categoryName}</Text>
+          <Text style={styles.categoryTag}>{categoryPresentation(categoryName).emoji} {categoryName}</Text>
           {reviewed && <Text style={styles.reviewedTag}>{t('shopping.reviewedTag')}</Text>}
         </View>
         {onInfo && (

@@ -14,14 +14,15 @@ import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/nativ
 import type { RouteProp } from '@react-navigation/native';
 
 import type { ShoppingListItem, MenuPlan, Recipe } from '../../models/types';
-import { ShoppingItem, EmptyState, SortControl, type SortDirection } from '../../components';
+import { ShoppingItem, ShoppingRow, EmptyState, SortControl, type SortDirection } from '../../components';
 import { useTheme } from '../../context/ThemeContext';
 import type { ThemeColors } from '../../constants/theme';
 import { MULTI_COLUMN_BREAKPOINT } from '../../components/ResponsiveLayout';
 import { useShoppingList, usePlanning, useRecipes } from '../../hooks';
 import { useI18n } from '../../i18n';
 import { shareText } from '../../utils/share';
-import { classifyItem, reviewStatusOf } from './classifyItem';
+import { classifyItem, reviewStatusOf, type PantryReview } from './classifyItem';
+import { loadReviewed, saveReviewed } from './reviewedStore';
 import { categoryPresentation } from '../../constants/ingredient-categories';
 import { exportPdf, escapeHtml } from '../../utils/exportPdf';
 import type { ShoppingStackParamList } from '../../navigation/types';
@@ -43,7 +44,8 @@ export function ShoppingListScreen() {
   const { shoppingList, loading, editQuantity, removeItem, regenerate, loadByPlanId, generate, confirmPantryQuantity } = useShoppingList();
   const { recipes } = useRecipes();
 
-  const [reviewedItems, setReviewedItems] = useState<Record<string, 'confirmed' | 'none'>>({});
+  const [reviewedItems, setReviewedItems] = useState<Record<string, PantryReview>>({});
+  const [viewMode, setViewMode] = useState<'list' | 'cards'>('list');
   const [pickerVisible, setPickerVisible] = useState(false);
   const [ingredientInfo, setIngredientInfo] = useState<ShoppingListItem | null>(null);
   const [sortField, setSortField] = useState<'category' | 'name'>('category');
@@ -80,6 +82,25 @@ export function ShoppingListScreen() {
       loadByPlanId(currentPlanId);
     }
   }, [currentPlanId, isCustomList, loadPlan, loadByPlanId]);
+
+  // The review lives with the plan: reopening the list restores what was already confirmed.
+  useEffect(() => {
+    if (!currentPlanId) return;
+    let cancelled = false;
+    setReviewedItems({});
+    loadReviewed(currentPlanId).then((saved) => {
+      if (!cancelled) setReviewedItems(saved);
+    });
+    return () => { cancelled = true; };
+  }, [currentPlanId]);
+
+  const setReview = useCallback((ingredientId: string, status: PantryReview) => {
+    setReviewedItems((prev) => {
+      const next = { ...prev, [ingredientId]: status };
+      if (currentPlanId) saveReviewed(currentPlanId, next);
+      return next;
+    });
+  }, [currentPlanId]);
 
   useEffect(() => {
     if (shoppingList?.isStale && !isCustomList && !loading) {
@@ -287,17 +308,37 @@ export function ShoppingListScreen() {
 
   const renderShoppingItem = ({ item }: { item: ShoppingListItem }) => {
     const status = reviewStatusOf(reviewedItems, item.ingredientId);
-    return (
-      <View style={[{ opacity: status !== 'unknown' && item.purchaseUnits <= 0 ? 0.6 : 1 }, isWideViewport && styles.gridItemContainer]}>
-        <ShoppingItem
+    const card = () => (
+      <ShoppingItem
+        item={item}
+        pantryStatus={status}
+        onStatusChange={(newStatus) => setReview(item.ingredientId, newStatus)}
+        onConfirmPantry={(available) => handleConfirmPantry(item.ingredientId, available)}
+        onQuantityChange={(qty) => handleQuantityChange(item.id, qty)}
+        onDelete={() => handleDeleteItem(item.id)}
+        onInfo={() => setIngredientInfo(item)}
+      />
+    );
+    if (viewMode === 'list') {
+      return (
+        <ShoppingRow
           item={item}
           pantryStatus={status}
-          onStatusChange={(newStatus) => setReviewedItems(prev => ({...prev, [item.ingredientId]: newStatus}))}
-          onConfirmPantry={(available) => handleConfirmPantry(item.ingredientId, available)}
-          onQuantityChange={(qty) => handleQuantityChange(item.id, qty)}
-          onDelete={() => handleDeleteItem(item.id)}
-          onInfo={() => setIngredientInfo(item)}
+          onConfirmHave={() => {
+            setReview(item.ingredientId, 'confirmed');
+            handleConfirmPantry(item.ingredientId, item.pantryQuantityDeducted);
+          }}
+          onConfirmNone={() => {
+            setReview(item.ingredientId, 'none');
+            handleConfirmPantry(item.ingredientId, 0);
+          }}
+          renderEditor={card}
         />
+      );
+    }
+    return (
+      <View style={[{ opacity: status !== 'unknown' && item.purchaseUnits <= 0 ? 0.6 : 1 }, isWideViewport && styles.gridItemContainer]}>
+        {card()}
       </View>
     );
   };
@@ -326,7 +367,7 @@ export function ShoppingListScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.listHeader}>
+      <View style={[styles.listHeader, !isWideViewport && styles.listHeaderNarrow]}>
         <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
           <Text style={styles.backButtonText}>{t('common.back')}</Text>
         </TouchableOpacity>
@@ -340,7 +381,7 @@ export function ShoppingListScreen() {
           {!isCustomList && availablePlans.length > 1 && <Text style={styles.dropdownIcon}>▼</Text>}
         </TouchableOpacity>
         
-        <View style={styles.headerActionsGroup}>
+        <View style={[styles.headerActionsGroup, !isWideViewport && styles.headerActionsNarrow]}>
           <TouchableOpacity style={[styles.headerBtn, { backgroundColor: colors.successBg, borderColor: colors.success }]} onPress={() => setExportChoiceVisible(true)}>
             <Text style={[styles.headerBtnText, { color: colors.successText }]}>{t('shopping.export')}</Text>
           </TouchableOpacity>
@@ -460,9 +501,28 @@ export function ShoppingListScreen() {
               onFieldChange={setSortField}
               onDirectionToggle={() => setSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'))}
             />
+            <View style={styles.modeToggle}>
+              {(['list', 'cards'] as const).map((mode) => (
+                <TouchableOpacity
+                  key={mode}
+                  onPress={() => setViewMode(mode)}
+                  style={[styles.modeButton, viewMode === mode && styles.modeButtonActive]}
+                  accessibilityRole="button"
+                >
+                  <Text style={[styles.modeButtonText, viewMode === mode && styles.modeButtonTextActive]}>
+                    {mode === 'list' ? t('shopping.modeList') : t('shopping.modeCards')}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
-          {sections.map(section => (
+          {sections.map((section, index) => (
             <View key={section.type} style={styles.sectionContainer}>
+              {section.type !== 'pending' && sections.findIndex(s => s.type !== 'pending') === index && (
+                <Text style={styles.reviewedHeading}>
+                  {t('shopping.sectionReviewed', { count: sections.filter(s => s.type !== 'pending').reduce((n, s) => n + s.data.length, 0) })}
+                </Text>
+              )}
               <View style={[
                 styles.sectionHeader, 
                 section.type === 'pending' ? styles.headerPending : section.type === 'buy' ? styles.headerBuy : styles.headerDone
@@ -500,6 +560,9 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   dropdownIcon: { fontSize: 12, color: colors.textFaint, marginLeft: 6 },
   
   headerActionsGroup: { flexDirection: 'row', gap: 6 },
+  // On phones the buttons drop to their own row so the plan name has room.
+  listHeaderNarrow: { flexWrap: 'wrap', rowGap: 8 },
+  headerActionsNarrow: { width: '100%', justifyContent: 'flex-end' },
   headerBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, borderWidth: 1 },
   headerBtnText: { fontSize: 13, fontWeight: '600' },
   exportOption: { paddingVertical: 14, paddingHorizontal: 16, borderRadius: 8, borderWidth: 1, alignItems: 'center', marginBottom: 10 },
@@ -517,7 +580,13 @@ const makeStyles = (colors: ThemeColors) => StyleSheet.create({
   headerTextDone: { color: colors.successText },
 
   listContent: { paddingBottom: 16 },
-  sortToolbar: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
+  sortToolbar: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4, gap: 8 },
+  modeToggle: { flexDirection: 'row', alignSelf: 'flex-start', backgroundColor: colors.card, borderRadius: 8, padding: 2 },
+  modeButton: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6 },
+  modeButtonActive: { backgroundColor: colors.accent },
+  modeButtonText: { fontSize: 13, fontWeight: '600', color: colors.textMuted },
+  modeButtonTextActive: { color: colors.surface },
+  reviewedHeading: { fontSize: 18, fontWeight: '800', color: colors.text, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8 },
   
   gridContainer: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 8, marginTop: 8 },
   gridItem: { width: '50%', padding: 8 },

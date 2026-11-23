@@ -289,6 +289,22 @@ export class ShoppingListRepository
     items: CreateShoppingListItemInput[]
   ): Promise<ShoppingList> {
     return withTransaction(this.db, async (db) => {
+      // Remember what the user removed or set by hand, so regenerating (e.g.
+      // confirming the pantry of another item) doesn't undo it.
+      const previousRows = await db.getAllAsync<{
+        ingredient_id: string;
+        is_removed: number;
+        is_manually_edited: number;
+        purchase_units: number;
+        pantry_quantity_deducted: number;
+        total_quantity_needed: number;
+      }>(
+        `SELECT ingredient_id, is_removed, is_manually_edited, purchase_units, pantry_quantity_deducted, total_quantity_needed
+         FROM shopping_list_items WHERE list_id = ?`,
+        [listId]
+      );
+      const previous = new Map(previousRows.map((r) => [r.ingredient_id, r]));
+
       // Delete existing items
       await db.runAsync(
         `DELETE FROM shopping_list_items WHERE list_id = ?`,
@@ -304,11 +320,20 @@ export class ShoppingListRepository
 
       // Insert new items
       const shoppingItems: ShoppingListItem[] = [];
-      for (const item of items) {
+      for (const rawItem of items) {
+        const prev = previous.get(rawItem.ingredientId);
+        const isRemoved = prev?.is_removed === 1;
+        // A manual amount stays while its inputs (plan need and pantry) are unchanged;
+        // if either changed, the amount is recalculated.
+        const keepManual =
+          prev?.is_manually_edited === 1 &&
+          prev.pantry_quantity_deducted === rawItem.pantryQuantityDeducted &&
+          prev.total_quantity_needed === rawItem.totalQuantityNeeded;
+        const item = keepManual ? { ...rawItem, purchaseUnits: prev!.purchase_units } : rawItem;
         const itemId = generateId();
         await db.runAsync(
           `INSERT INTO shopping_list_items (id, list_id, ingredient_id, total_quantity_needed, pantry_quantity_deducted, net_quantity, purchase_units, is_manually_edited, is_removed, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             itemId,
             listId,
@@ -317,6 +342,8 @@ export class ShoppingListRepository
             item.pantryQuantityDeducted,
             item.netQuantity,
             item.purchaseUnits,
+            keepManual ? 1 : 0,
+            isRemoved ? 1 : 0,
             now,
           ]
         );
@@ -329,8 +356,8 @@ export class ShoppingListRepository
           pantryQuantityDeducted: item.pantryQuantityDeducted,
           netQuantity: item.netQuantity,
           purchaseUnits: item.purchaseUnits,
-          isManuallyEdited: false,
-          isRemoved: false,
+          isManuallyEdited: keepManual,
+          isRemoved,
         });
       }
 

@@ -203,6 +203,36 @@ describe('ShoppingListRepository', () => {
     });
   });
 
+  describe('update keeps user changes', () => {
+    const prev = (over: object) => ({
+      ingredient_id: 'ing-3', is_removed: 0, is_manually_edited: 0, purchase_units: 9,
+      pantry_quantity_deducted: 0, total_quantity_needed: 1, ...over,
+    });
+    const item = (id: string) => ({ ingredientId: id, totalQuantityNeeded: 1, pantryQuantityDeducted: 0, netQuantity: 1, purchaseUnits: 1 });
+
+    beforeEach(() => {
+      mockDb.getFirstAsync.mockResolvedValue({ plan_id: 'plan-1', generated_at: '2024-01-16T12:00:00.000Z', is_stale: 0 });
+    });
+
+    it('re-inserts a previously removed ingredient as removed', async () => {
+      mockDb.getAllAsync.mockResolvedValue([prev({ is_removed: 1 })]);
+      const result = await repo.updateItems('list-1', [item('ing-3'), item('ing-4')]);
+      expect(result.items.map((i) => i.isRemoved)).toEqual([true, false]);
+    });
+
+    it('keeps a manual amount while need and pantry are unchanged', async () => {
+      mockDb.getAllAsync.mockResolvedValue([prev({ is_manually_edited: 1 })]);
+      const result = await repo.updateItems('list-1', [item('ing-3')]);
+      expect(result.items[0]).toMatchObject({ purchaseUnits: 9, isManuallyEdited: true });
+    });
+
+    it('recalculates a manual amount when the pantry changed', async () => {
+      mockDb.getAllAsync.mockResolvedValue([prev({ is_manually_edited: 1, pantry_quantity_deducted: 5 })]);
+      const result = await repo.updateItems('list-1', [item('ing-3')]);
+      expect(result.items[0]).toMatchObject({ purchaseUnits: 1, isManuallyEdited: false });
+    });
+  });
+
   describe('markStale', () => {
     it('should set is_stale = 1 on the shopping list', async () => {
       await repo.markStale('list-1');

@@ -15,6 +15,7 @@ export type { CalendarPickerProps } from './CalendarPicker';
 
 export { ShoppingItem } from './ShoppingItem';
 export type { ShoppingItemProps } from './ShoppingItem';
+export { ShoppingRow } from './ShoppingRow';
 
 export { SortControl } from './SortControl';
 export type { SortControlProps, SortField, SortDirection } from './SortControl';
